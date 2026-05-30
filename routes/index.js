@@ -1,9 +1,19 @@
 var express = require('express');
 var router = express.Router();
 
-/* GET home page. */
 router.get('/', function(req, res, next) {
-  res.render('index', { title: 'Express' });
+  res.json({
+    data: {
+      ok: true,
+      service: 'vi-vi-vu-api',
+      health: '/health',
+      apiHealth: '/api/v1/health'
+    },
+    meta: {
+      requestId: req.requestId
+    },
+    error: null
+  });
 });
 
 module.exports = router;

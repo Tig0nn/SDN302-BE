@@ -1,0 +1,4 @@
+.env
+.npm-cache/
+.playwright-mcp/
+node_modules/
