@@ -38,6 +38,12 @@ const env = {
   SMTP_USER: process.env.SMTP_USER || '',
   SMTP_PASS: process.env.SMTP_PASS || '',
   SMTP_FROM: process.env.SMTP_FROM || process.env.SMTP_USER || '',
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+  GEMINI_API_BASE_URL:
+    process.env.GEMINI_API_BASE_URL ||
+    'https://generativelanguage.googleapis.com/v1beta',
+  AI_RATE_LIMIT_WINDOW_MS: Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 60000),
+  AI_RATE_LIMIT_MAX: Number(process.env.AI_RATE_LIMIT_MAX || 30),
 };
 
 module.exports = env;

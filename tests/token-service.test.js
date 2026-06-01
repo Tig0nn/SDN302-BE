@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-with-enough-length';
 
@@ -25,4 +26,24 @@ test('refresh token hashing is deterministic and not raw-token preserving', func
 
   assert.equal(firstHash, secondHash);
   assert.notEqual(firstHash, token);
+});
+
+test('expired access tokens are rejected', function () {
+  const token = jwt.sign(
+    {
+      sub: '11111111-1111-4111-8111-111111111111',
+      email: 'user@example.com',
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: -1,
+      issuer: 'vi-vi-vu-api',
+      audience: 'vi-vi-vu-mobile',
+    }
+  );
+
+  assert.throws(
+    () => tokenService.verifyAccessToken(token),
+    (err) => err.code === 'INVALID_ACCESS_TOKEN' && err.status === 401
+  );
 });

@@ -1,4 +1,5 @@
 const db = require('../../config/db');
+const { systemCategories, paymentAccounts } = require('../../db/seed-data/system');
 
 const USER_FIELDS = `
   id,
@@ -147,8 +148,8 @@ async function updateUserProfile(userId, updates) {
   return result.rows[0] || null;
 }
 
-async function ensureDefaultUserData(userId) {
-  await db.query(
+async function ensureUserSettings(client, userId) {
+  await client.query(
     `
       insert into user_settings (user_id)
       values ($1)
@@ -156,8 +157,10 @@ async function ensureDefaultUserData(userId) {
     `,
     [userId]
   );
+}
 
-  const ledger = await db.query(
+async function ensureDefaultLedger(client, userId) {
+  const ledger = await client.query(
     `
       select id
       from ledgers
@@ -170,13 +173,187 @@ async function ensureDefaultUserData(userId) {
   );
 
   if (ledger.rowCount === 0) {
-    await db.query(
+    await client.query(
       `
         insert into ledgers (user_id, name, is_default)
         values ($1, 'Sổ Chính', true)
       `,
       [userId]
     );
+  }
+}
+
+async function upsertDefaultCategory(client, userId, category) {
+  const existing = await client.query(
+    `
+      select id
+      from categories
+      where user_id = $1
+        and type = $2
+        and name = $3
+        and parent_id is not distinct from $4
+        and deleted_at is null
+      limit 1
+    `,
+    [userId, category.type, category.name, category.parentId || null]
+  );
+
+  if (existing.rowCount > 0) {
+    const id = existing.rows[0].id;
+
+    await client.query(
+      `
+        update categories
+        set icon = $2,
+            color = $3,
+            sort_order = $4,
+            is_system = true,
+            updated_at = now()
+        where id = $1
+      `,
+      [id, category.icon || null, category.color || null, category.sortOrder]
+    );
+
+    return id;
+  }
+
+  const inserted = await client.query(
+    `
+      insert into categories (
+        user_id,
+        type,
+        name,
+        parent_id,
+        icon,
+        color,
+        is_system,
+        sort_order
+      )
+      values ($1, $2, $3, $4, $5, $6, true, $7)
+      returning id
+    `,
+    [
+      userId,
+      category.type,
+      category.name,
+      category.parentId || null,
+      category.icon || null,
+      category.color || null,
+      category.sortOrder,
+    ]
+  );
+
+  return inserted.rows[0].id;
+}
+
+async function ensureDefaultCategories(client, userId) {
+  for (const group of systemCategories) {
+    for (let parentIndex = 0; parentIndex < group.categories.length; parentIndex += 1) {
+      const parent = group.categories[parentIndex];
+      const parentId = await upsertDefaultCategory(client, userId, {
+        type: group.type,
+        name: parent.name,
+        icon: parent.icon,
+        color: parent.color,
+        sortOrder: parentIndex,
+      });
+
+      for (let childIndex = 0; childIndex < parent.subcategories.length; childIndex += 1) {
+        const child = parent.subcategories[childIndex];
+
+        await upsertDefaultCategory(client, userId, {
+          type: group.type,
+          name: child.name,
+          parentId,
+          icon: child.icon || parent.icon,
+          color: child.color || parent.color,
+          sortOrder: childIndex,
+        });
+      }
+    }
+  }
+}
+
+async function ensureDefaultPaymentAccounts(client, userId) {
+  for (let index = 0; index < paymentAccounts.length; index += 1) {
+    const account = paymentAccounts[index];
+    const existing = await client.query(
+      `
+        select id
+        from payment_accounts
+        where user_id = $1
+          and name = $2
+          and deleted_at is null
+        limit 1
+      `,
+      [userId, account.name]
+    );
+
+    if (existing.rowCount > 0) {
+      await client.query(
+        `
+          update payment_accounts
+          set short_name = $2,
+              type = $3,
+              color = $4,
+              is_system = true,
+              sort_order = $5,
+              updated_at = now()
+          where id = $1
+        `,
+        [
+          existing.rows[0].id,
+          account.shortName,
+          account.type,
+          account.color,
+          index,
+        ]
+      );
+
+      continue;
+    }
+
+    await client.query(
+      `
+        insert into payment_accounts (
+          user_id,
+          name,
+          short_name,
+          type,
+          color,
+          is_system,
+          sort_order
+        )
+        values ($1, $2, $3, $4, $5, true, $6)
+      `,
+      [
+        userId,
+        account.name,
+        account.shortName,
+        account.type,
+        account.color,
+        index,
+      ]
+    );
+  }
+}
+
+async function ensureDefaultUserData(userId) {
+  const pool = db.getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+    await ensureUserSettings(client, userId);
+    await ensureDefaultLedger(client, userId);
+    await ensureDefaultCategories(client, userId);
+    await ensureDefaultPaymentAccounts(client, userId);
+    await client.query('commit');
+  } catch (err) {
+    await client.query('rollback');
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
