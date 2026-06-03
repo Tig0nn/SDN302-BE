@@ -4,11 +4,13 @@ var app = require('./app');
 var debug = require('debug')('vi-vi-vu-api:server');
 var http = require('http');
 var env = require('./config/env');
+var notificationScheduler = require('./modules/notifications/scheduler');
 
 var port = normalizePort(env.PORT);
 app.set('port', port);
 
 var server = http.createServer(app);
+var stopNotificationScheduler = notificationScheduler.startNotificationScheduler();
 
 server.listen(port);
 server.on('error', onError);
@@ -57,3 +59,4 @@ function onListening() {
 }
 
 module.exports = server;
+module.exports.stopNotificationScheduler = stopNotificationScheduler;

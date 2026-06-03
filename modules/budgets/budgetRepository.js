@@ -1,4 +1,5 @@
 const db = require('../../config/db');
+const notificationRepository = require('../notifications/notificationRepository');
 
 const BUDGET_FIELDS = `
   b.id,
@@ -346,7 +347,7 @@ async function deleteBudget(userId, budgetId) {
 async function evaluateBudgetAlertsForBudgetId(userId, budgetId, client) {
   const executor = getExecutor(client);
 
-  await executor.query(
+  const result = await executor.query(
     `
       with budget_status as (
         select
@@ -390,7 +391,8 @@ async function evaluateBudgetAlertsForBudgetId(userId, budgetId, client) {
         type,
         title,
         body,
-        payload
+        payload,
+        event_key
       )
       select
         b.user_id,
@@ -405,22 +407,23 @@ async function evaluateBudgetAlertsForBudgetId(userId, budgetId, client) {
           'threshold', t.threshold,
           'spentAmountVnd', b.spent_amount_vnd,
           'limitAmountVnd', b.limit_amount_vnd
-        )
+        ),
+        'budget_threshold:' || b.id::text || ':' || to_char(b.month, 'YYYY-MM') || ':' || t.threshold::text
       from budget_status b
+      join user_settings s
+        on s.user_id = b.user_id
+       and s.budget_warning_enabled = true
       join thresholds t on true
       where b.spent_amount_vnd * 100 >= b.limit_amount_vnd * t.threshold
-        and not exists (
-          select 1
-          from notification_events n
-          where n.user_id = b.user_id
-            and n.type = 'budget_threshold'
-            and n.payload->>'budgetId' = b.id::text
-            and n.payload->>'threshold' = t.threshold::text
-            and n.payload->>'month' = to_char(b.month, 'YYYY-MM')
-        )
+      on conflict (user_id, event_key) where event_key is not null do nothing
+      returning ${notificationRepository.NOTIFICATION_FIELDS}
     `,
     [userId, budgetId]
   );
+
+  if (!client) {
+    await notificationRepository.sendEvents(result.rows);
+  }
 }
 
 async function evaluateBudgetAlertsForTransaction(userId, transaction, client) {

@@ -30,12 +30,48 @@ function standardSuccess(schemaRef) {
   };
 }
 
+function transactionExportParameters() {
+  return [
+    {
+      name: 'ledgerId',
+      in: 'query',
+      required: true,
+      schema: { type: 'string', format: 'uuid' },
+    },
+    {
+      name: 'dateFrom',
+      in: 'query',
+      schema: { type: 'string', format: 'date' },
+    },
+    {
+      name: 'dateTo',
+      in: 'query',
+      schema: { type: 'string', format: 'date' },
+    },
+    {
+      name: 'type',
+      in: 'query',
+      schema: { type: 'string', enum: ['income', 'expense'] },
+    },
+    {
+      name: 'categoryId',
+      in: 'query',
+      schema: { type: 'string', format: 'uuid' },
+    },
+    {
+      name: 'search',
+      in: 'query',
+      schema: { type: 'string', minLength: 1, maxLength: 120 },
+    },
+  ];
+}
+
 function buildOpenApiSpec(req) {
   return {
     openapi: '3.0.3',
     info: {
       title: 'Ví Vi Vu API',
-      version: '1.0.0',
+      version: '1.1.0',
       description:
         'Backend API for Ví Vi Vu personal finance mobile app. Current public contract covers service health, auth/session flow, profile endpoints, master data APIs, transaction MVP APIs, analytics APIs, budget APIs, planning APIs, shopping list APIs, and AI assistant APIs.',
     },
@@ -55,6 +91,11 @@ function buildOpenApiSpec(req) {
       { name: 'Challenges', description: 'Saving challenges and daily check-ins' },
       { name: 'Shopping', description: 'Shopping plans, items, and transaction conversion' },
       { name: 'AI', description: 'BYOK Gemini assistant, transaction preview, actions, and receipt scan' },
+      { name: 'Imports', description: 'CSV, XLSX, and pasted transaction imports' },
+      { name: 'Exports', description: 'Transaction CSV, XLSX, and PDF exports' },
+      { name: 'Devices', description: 'Expo push device token registration' },
+      { name: 'Notifications', description: 'Notification event history and read state' },
+      { name: 'Sync', description: 'Delta sync and offline mutation queue' },
     ],
     paths: {
       '/': {
@@ -1779,6 +1820,271 @@ function buildOpenApiSpec(req) {
           },
         },
       },
+      [`${apiPrefix}/imports/preview`]: {
+        post: {
+          tags: ['Imports'],
+          summary: 'Preview transaction import rows',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ImportPreviewRequest' },
+              },
+            },
+          },
+          responses: {
+            201: {
+              description: 'Created import preview job',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/ImportJobPayload'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/imports/{id}/commit`]: {
+        post: {
+          tags: ['Imports'],
+          summary: 'Commit valid rows from an import preview job',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ $ref: '#/components/parameters/IdParam' }],
+          responses: {
+            201: {
+              description: 'Committed valid import rows',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/ImportCommitPayload'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+            404: { $ref: '#/components/responses/Error' },
+            409: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/exports/transactions.csv`]: {
+        get: {
+          tags: ['Exports'],
+          summary: 'Export filtered transactions as CSV',
+          security: [{ bearerAuth: [] }],
+          parameters: transactionExportParameters(),
+          responses: {
+            200: {
+              description: 'CSV transaction export',
+              content: {
+                'text/csv': {
+                  schema: { type: 'string', format: 'binary' },
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/exports/transactions.xlsx`]: {
+        get: {
+          tags: ['Exports'],
+          summary: 'Export filtered transactions as Excel workbook',
+          security: [{ bearerAuth: [] }],
+          parameters: transactionExportParameters(),
+          responses: {
+            200: {
+              description: 'XLSX transaction export',
+              content: {
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+                  schema: { type: 'string', format: 'binary' },
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/exports/transactions.pdf`]: {
+        get: {
+          tags: ['Exports'],
+          summary: 'Export filtered transactions as PDF',
+          security: [{ bearerAuth: [] }],
+          parameters: transactionExportParameters(),
+          responses: {
+            200: {
+              description: 'PDF transaction export',
+              content: {
+                'application/pdf': {
+                  schema: { type: 'string', format: 'binary' },
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/devices`]: {
+        post: {
+          tags: ['Devices'],
+          summary: 'Register or reactivate an Expo push token',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/RegisterDeviceRequest' },
+              },
+            },
+          },
+          responses: {
+            201: {
+              description: 'Registered device token',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/DeviceTokenPayload'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/devices/{id}`]: {
+        delete: {
+          tags: ['Devices'],
+          summary: 'Deactivate a registered device token',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ $ref: '#/components/parameters/IdParam' }],
+          responses: {
+            200: {
+              description: 'Deactivated device token',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/DeviceTokenPayload'),
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Error' },
+            404: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/notifications`]: {
+        get: {
+          tags: ['Notifications'],
+          summary: 'List notification event history',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'unreadOnly',
+              in: 'query',
+              schema: { type: 'boolean', default: false },
+            },
+            {
+              name: 'page',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, default: 1 },
+            },
+            {
+              name: 'pageSize',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            },
+          ],
+          responses: {
+            200: {
+              description: 'Notification list',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/NotificationListPayload'),
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/notifications/{id}/read`]: {
+        patch: {
+          tags: ['Notifications'],
+          summary: 'Mark a notification as read',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ $ref: '#/components/parameters/IdParam' }],
+          responses: {
+            200: {
+              description: 'Read notification',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/NotificationPayload'),
+                },
+              },
+            },
+            401: { $ref: '#/components/responses/Error' },
+            404: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/sync/changes`]: {
+        get: {
+          tags: ['Sync'],
+          summary: 'Fetch delta changes since a server timestamp',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'since',
+              in: 'query',
+              required: true,
+              schema: { type: 'string', format: 'date-time' },
+            },
+          ],
+          responses: {
+            200: {
+              description: 'Delta changes for syncable tables',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/SyncChangesPayload'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/sync/mutations`]: {
+        post: {
+          tags: ['Sync'],
+          summary: 'Apply queued offline mutations idempotently',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SyncMutationsRequest' },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Mutation application results',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/SyncMutationsPayload'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            401: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
     },
     components: {
       parameters: {
@@ -2893,6 +3199,294 @@ function buildOpenApiSpec(req) {
             messages: {
               type: 'array',
               items: { $ref: '#/components/schemas/AiMessage' },
+            },
+          },
+        },
+        ImportPreviewRequest: {
+          type: 'object',
+          required: ['ledgerId', 'sourceType'],
+          properties: {
+            ledgerId: { type: 'string', format: 'uuid' },
+            sourceType: { type: 'string', enum: ['csv', 'xlsx', 'paste_text'] },
+            content: {
+              type: 'string',
+              description: 'CSV or pasted table text with a header row.',
+            },
+            contentBase64: {
+              type: 'string',
+              description: 'Base64 encoded XLSX workbook for sourceType=xlsx.',
+            },
+          },
+        },
+        ImportRowError: {
+          type: 'object',
+          properties: {
+            field: { type: 'string' },
+            code: { type: 'string' },
+            message: { type: 'string' },
+          },
+        },
+        ImportRow: {
+          type: 'object',
+          properties: {
+            rowNumber: { type: 'integer' },
+            raw: { type: 'object' },
+            isValid: { type: 'boolean' },
+            errors: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ImportRowError' },
+            },
+            normalized: {
+              allOf: [{ $ref: '#/components/schemas/CreateTransactionRequest' }],
+              nullable: true,
+            },
+          },
+        },
+        ImportJob: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            userId: { type: 'string', format: 'uuid' },
+            ledgerId: { type: 'string', format: 'uuid' },
+            sourceType: { type: 'string', enum: ['csv', 'xlsx', 'paste_text'] },
+            status: {
+              type: 'string',
+              enum: ['preview', 'processing', 'completed', 'failed'],
+            },
+            summary: {
+              type: 'object',
+              properties: {
+                sourceType: { type: 'string' },
+                totalRows: { type: 'integer' },
+                validCount: { type: 'integer' },
+                invalidCount: { type: 'integer' },
+                committedCount: { type: 'integer' },
+                rows: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/ImportRow' },
+                },
+              },
+            },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ImportJobPayload: {
+          type: 'object',
+          properties: {
+            job: { $ref: '#/components/schemas/ImportJob' },
+          },
+        },
+        ImportCommitPayload: {
+          type: 'object',
+          properties: {
+            job: { $ref: '#/components/schemas/ImportJob' },
+            transactions: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/Transaction' },
+            },
+          },
+        },
+        RegisterDeviceRequest: {
+          type: 'object',
+          required: ['platform', 'expoPushToken'],
+          properties: {
+            platform: { type: 'string', enum: ['ios', 'android'] },
+            expoPushToken: { type: 'string', minLength: 1, maxLength: 300 },
+          },
+        },
+        DeviceToken: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            userId: { type: 'string', format: 'uuid' },
+            platform: { type: 'string', enum: ['ios', 'android'] },
+            expoPushToken: { type: 'string' },
+            isActive: { type: 'boolean' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        DeviceTokenPayload: {
+          type: 'object',
+          properties: {
+            deviceToken: { $ref: '#/components/schemas/DeviceToken' },
+          },
+        },
+        NotificationEvent: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            userId: { type: 'string', format: 'uuid' },
+            type: {
+              type: 'string',
+              enum: [
+                'daily_reminder',
+                'budget_threshold',
+                'debt_due',
+                'debt_overdue',
+                'goal_completed',
+              ],
+            },
+            title: { type: 'string' },
+            body: { type: 'string' },
+            payload: { type: 'object', nullable: true },
+            eventKey: { type: 'string', nullable: true },
+            sentAt: { type: 'string', format: 'date-time', nullable: true },
+            readAt: { type: 'string', format: 'date-time', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        NotificationPayload: {
+          type: 'object',
+          properties: {
+            notification: { $ref: '#/components/schemas/NotificationEvent' },
+          },
+        },
+        NotificationListPayload: {
+          type: 'object',
+          properties: {
+            notifications: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/NotificationEvent' },
+            },
+            pagination: {
+              type: 'object',
+              properties: {
+                page: { type: 'integer' },
+                pageSize: { type: 'integer' },
+                total: { type: 'integer' },
+                totalPages: { type: 'integer' },
+              },
+            },
+          },
+        },
+        SyncRecord: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            userId: { type: 'string', format: 'uuid', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+            deletedAt: { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
+        SyncChangesPayload: {
+          type: 'object',
+          properties: {
+            since: { type: 'string', format: 'date-time' },
+            serverTime: { type: 'string', format: 'date-time' },
+            changes: {
+              type: 'object',
+              properties: {
+                userSettings: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                ledgers: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                categories: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                paymentAccounts: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                transactions: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                budgets: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                goals: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                debts: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                debtPayments: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                challenges: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                challengeCheckins: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                shoppingPlans: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                shoppingItems: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+                notifications: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/SyncRecord' },
+                },
+              },
+            },
+          },
+        },
+        SyncMutation: {
+          type: 'object',
+          required: ['clientMutationId', 'operation'],
+          properties: {
+            clientMutationId: { type: 'string', minLength: 1, maxLength: 120 },
+            operation: {
+              type: 'string',
+              enum: [
+                'transactions.create',
+                'transactions.update',
+                'transactions.delete',
+              ],
+            },
+            payload: { type: 'object' },
+          },
+        },
+        SyncMutationsRequest: {
+          type: 'object',
+          required: ['mutations'],
+          properties: {
+            mutations: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 50,
+              items: { $ref: '#/components/schemas/SyncMutation' },
+            },
+          },
+        },
+        SyncMutationResult: {
+          type: 'object',
+          properties: {
+            clientMutationId: { type: 'string' },
+            operation: { type: 'string' },
+            status: {
+              type: 'string',
+              enum: ['completed', 'replayed', 'processing', 'failed'],
+            },
+            result: { type: 'object', nullable: true },
+          },
+        },
+        SyncMutationsPayload: {
+          type: 'object',
+          properties: {
+            serverTime: { type: 'string', format: 'date-time' },
+            results: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/SyncMutationResult' },
             },
           },
         },

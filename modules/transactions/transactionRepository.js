@@ -310,6 +310,26 @@ function buildListParams(userId, filters) {
   ];
 }
 
+const LIST_WHERE_CLAUSE = `
+  t.user_id = $1
+  and t.ledger_id = $2
+  and t.deleted_at is null
+  and ($3::date is null or t.transaction_date >= $3::date)
+  and ($4::date is null or t.transaction_date <= $4::date)
+  and ($5::text is null or t.type = $5)
+  and (
+    $6::uuid is null
+    or t.category_id = $6::uuid
+    or t.subcategory_id = $6::uuid
+  )
+  and (
+    $7::text is null
+    or t.note ilike '%' || $7 || '%'
+    or t.category_name_snapshot ilike '%' || $7 || '%'
+    or coalesce(t.subcategory_name_snapshot, '') ilike '%' || $7 || '%'
+  )
+`;
+
 async function listTransactions(userId, filters) {
   await assertLedger(userId, filters.ledgerId);
 
@@ -319,32 +339,12 @@ async function listTransactions(userId, filters) {
   const offset = (page - 1) * pageSize;
   const dataParams = [...baseParams, pageSize, offset];
 
-  const whereClause = `
-    t.user_id = $1
-    and t.ledger_id = $2
-    and t.deleted_at is null
-    and ($3::date is null or t.transaction_date >= $3::date)
-    and ($4::date is null or t.transaction_date <= $4::date)
-    and ($5::text is null or t.type = $5)
-    and (
-      $6::uuid is null
-      or t.category_id = $6::uuid
-      or t.subcategory_id = $6::uuid
-    )
-    and (
-      $7::text is null
-      or t.note ilike '%' || $7 || '%'
-      or t.category_name_snapshot ilike '%' || $7 || '%'
-      or coalesce(t.subcategory_name_snapshot, '') ilike '%' || $7 || '%'
-    )
-  `;
-
   const [rows, count] = await Promise.all([
     db.query(
       `
         select ${TRANSACTION_FIELDS}
         from transactions t
-        where ${whereClause}
+        where ${LIST_WHERE_CLAUSE}
         order by t.transaction_date desc, t.created_at desc
         limit $8
         offset $9
@@ -355,7 +355,7 @@ async function listTransactions(userId, filters) {
       `
         select count(*)::int as count
         from transactions t
-        where ${whereClause}
+        where ${LIST_WHERE_CLAUSE}
       `,
       baseParams
     ),
@@ -370,6 +370,23 @@ async function listTransactions(userId, filters) {
       totalPages: Math.ceil(count.rows[0].count / pageSize),
     },
   };
+}
+
+async function exportTransactions(userId, filters) {
+  await assertLedger(userId, filters.ledgerId);
+
+  const result = await db.query(
+    `
+      select ${TRANSACTION_FIELDS}
+      from transactions t
+      where ${LIST_WHERE_CLAUSE}
+      order by t.transaction_date desc, t.created_at desc
+      limit $8
+    `,
+    [...buildListParams(userId, filters), filters.limit || 10000]
+  );
+
+  return result.rows.map(mapTransaction);
 }
 
 async function getTransaction(userId, transactionId, client) {
@@ -393,8 +410,9 @@ async function getTransaction(userId, transactionId, client) {
   return mapTransaction(result.rows[0]);
 }
 
-async function updateTransaction(userId, transactionId, payload) {
-  const existing = await getTransaction(userId, transactionId);
+async function updateTransaction(userId, transactionId, payload, client) {
+  const executor = getExecutor(client);
+  const existing = await getTransaction(userId, transactionId, client);
   const next = {
     ledgerId: payload.ledgerId || existing.ledgerId,
     type: payload.type || existing.type,
@@ -416,13 +434,13 @@ async function updateTransaction(userId, transactionId, payload) {
       : existing.receiptImageUrl,
   };
 
-  await assertLedger(userId, next.ledgerId);
+  await assertLedger(userId, next.ledgerId, client);
 
-  const { category, subcategory } = await validateCategories(userId, next);
+  const { category, subcategory } = await validateCategories(userId, next, client);
 
-  await validatePaymentAccount(userId, next.paymentAccountId);
+  await validatePaymentAccount(userId, next.paymentAccountId, client);
 
-  const result = await db.query(
+  const result = await executor.query(
     `
       update transactions
       set ledger_id = $3,
@@ -466,13 +484,18 @@ async function updateTransaction(userId, transactionId, payload) {
 
   const transaction = mapTransaction(result.rows[0]);
 
-  await budgetRepository.evaluateBudgetAlertsForTransaction(userId, transaction);
+  await budgetRepository.evaluateBudgetAlertsForTransaction(
+    userId,
+    transaction,
+    client
+  );
 
   return transaction;
 }
 
-async function deleteTransaction(userId, transactionId) {
-  const result = await db.query(
+async function deleteTransaction(userId, transactionId, client) {
+  const executor = getExecutor(client);
+  const result = await executor.query(
     `
       update transactions
       set deleted_at = now()
@@ -545,6 +568,7 @@ module.exports = {
   createTransaction,
   createTransactionWithClient: insertTransaction,
   deleteTransaction,
+  exportTransactions,
   getCalendarSummary,
   getSummary,
   getTransaction,

@@ -273,6 +273,17 @@ test('GET /openapi.json exposes documented routes', async function () {
   assert.ok(res.body.paths['/api/v1/ai/transaction-preview']);
   assert.ok(res.body.paths['/api/v1/ai/chat']);
   assert.ok(res.body.paths['/api/v1/ai/receipt-scan']);
+  assert.ok(res.body.paths['/api/v1/imports/preview']);
+  assert.ok(res.body.paths['/api/v1/imports/{id}/commit']);
+  assert.ok(res.body.paths['/api/v1/exports/transactions.csv']);
+  assert.ok(res.body.paths['/api/v1/exports/transactions.xlsx']);
+  assert.ok(res.body.paths['/api/v1/exports/transactions.pdf']);
+  assert.ok(res.body.paths['/api/v1/devices']);
+  assert.ok(res.body.paths['/api/v1/devices/{id}']);
+  assert.ok(res.body.paths['/api/v1/notifications']);
+  assert.ok(res.body.paths['/api/v1/notifications/{id}/read']);
+  assert.ok(res.body.paths['/api/v1/sync/changes']);
+  assert.ok(res.body.paths['/api/v1/sync/mutations']);
 });
 
 test('GET /docs serves interactive API documentation shell', async function () {

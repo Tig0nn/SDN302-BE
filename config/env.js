@@ -44,6 +44,16 @@ const env = {
     'https://generativelanguage.googleapis.com/v1beta',
   AI_RATE_LIMIT_WINDOW_MS: Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 60000),
   AI_RATE_LIMIT_MAX: Number(process.env.AI_RATE_LIMIT_MAX || 30),
+  PDF_FONT_PATH: process.env.PDF_FONT_PATH || '',
+  EXPO_PUSH_URL:
+    process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send',
+  NOTIFICATION_JOBS_ENABLED:
+    process.env.NOTIFICATION_JOBS_ENABLED === 'true' ||
+    (process.env.NODE_ENV === 'production' &&
+      process.env.NOTIFICATION_JOBS_ENABLED !== 'false'),
+  NOTIFICATION_JOB_INTERVAL_MS: Number(
+    process.env.NOTIFICATION_JOB_INTERVAL_MS || 60 * 60 * 1000
+  ),
 };
 
 module.exports = env;

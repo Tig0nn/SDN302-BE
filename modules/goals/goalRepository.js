@@ -1,4 +1,5 @@
 const db = require('../../config/db');
+const notificationRepository = require('../notifications/notificationRepository');
 
 const GOAL_FIELDS = `
   id,
@@ -85,14 +86,15 @@ function resolveStatus(currentAmountVnd, targetAmountVnd, requestedStatus) {
 async function createCompletionNotification(userId, goal, client) {
   const executor = getExecutor(client);
 
-  await executor.query(
+  const result = await executor.query(
     `
       insert into notification_events (
         user_id,
         type,
         title,
         body,
-        payload
+        payload,
+        event_key
       )
       select
         $1,
@@ -105,14 +107,10 @@ async function createCompletionNotification(userId, goal, client) {
           'name', $4::text,
           'targetAmountVnd', $5::bigint,
           'currentAmountVnd', $6::bigint
-        )
-      where not exists (
-        select 1
-        from notification_events
-        where user_id = $1
-          and type = 'goal_completed'
-          and payload->>'goalId' = $2::text
-      )
+        ),
+        'goal_completed:' || $2::text
+      on conflict (user_id, event_key) where event_key is not null do nothing
+      returning ${notificationRepository.NOTIFICATION_FIELDS}
     `,
     [
       userId,
@@ -123,6 +121,10 @@ async function createCompletionNotification(userId, goal, client) {
       goal.currentAmountVnd,
     ]
   );
+
+  if (!client) {
+    await notificationRepository.sendEvents(result.rows);
+  }
 }
 
 async function listGoals(userId, filters) {
