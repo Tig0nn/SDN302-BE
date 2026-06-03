@@ -32,6 +32,7 @@ async function main() {
         'ai_conversations',
         'ai_messages',
         'import_jobs',
+        'audit_events',
         'device_tokens',
         'notification_events',
         'schema_migrations'

@@ -29,6 +29,14 @@ function unsupportedActionError(action) {
   return appError('AI_ACTION_NOT_SUPPORTED', `Unsupported AI action: ${action}`, 400);
 }
 
+function bulkDeleteConfirmationError() {
+  return appError(
+    'AI_BULK_DELETE_CONFIRMATION_REQUIRED',
+    'Bulk delete actions require payload.confirmed=true',
+    409
+  );
+}
+
 function getClarification(missingFields) {
   if (missingFields.includes('amountVnd')) {
     return 'Ban muon ghi giao dich voi so tien bao nhieu?';
@@ -121,6 +129,10 @@ async function executeAction(userId, action, payload) {
 
     if (transactionIds.length === 0) {
       throw missingFieldError('transactionIds');
+    }
+
+    if (normalizedPayload.confirmed !== true) {
+      throw bulkDeleteConfirmationError();
     }
 
     const transactions = [];

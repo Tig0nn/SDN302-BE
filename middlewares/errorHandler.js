@@ -1,5 +1,6 @@
 const { ZodError } = require('zod');
 const env = require('../config/env');
+const { redact, redactString } = require('../utils/redact');
 
 function isProduction() {
   return env.NODE_ENV === 'production';
@@ -34,8 +35,8 @@ function errorHandler(err, req, res, next) {
   if (normalized.status >= 500) {
     console.error({
       requestId: req.requestId,
-      error: err.message,
-      stack: isProduction() ? undefined : err.stack,
+      error: redactString(err.message),
+      stack: isProduction() ? undefined : redactString(err.stack),
     });
   }
 
@@ -52,10 +53,10 @@ function errorHandler(err, req, res, next) {
   };
 
   if (!isProduction() && err.stack) {
-    body.error.stack = err.stack;
+    body.error.stack = redactString(err.stack);
   }
 
-  res.status(normalized.status).json(body);
+  res.status(normalized.status).json(redact(body));
 }
 
 module.exports = errorHandler;

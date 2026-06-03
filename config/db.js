@@ -48,6 +48,26 @@ function getPool() {
   return pool;
 }
 
+function getPoolStats() {
+  if (!pool) {
+    return {
+      configured: Boolean(env.DATABASE_URL),
+      active: false,
+      totalCount: 0,
+      idleCount: 0,
+      waitingCount: 0,
+    };
+  }
+
+  return {
+    configured: true,
+    active: true,
+    totalCount: pool.totalCount,
+    idleCount: pool.idleCount,
+    waitingCount: pool.waitingCount,
+  };
+}
+
 function query() {
   try {
     const currentPool = getPool();
@@ -67,6 +87,7 @@ async function closePool() {
 
 module.exports = {
   getPool,
+  getPoolStats,
   query,
   closePool,
 };

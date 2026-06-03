@@ -78,6 +78,7 @@ function buildOpenApiSpec(req) {
     servers: getServers(req),
     tags: [
       { name: 'Health', description: 'Service readiness checks' },
+      { name: 'Metrics', description: 'Basic operational metrics' },
       { name: 'Auth', description: 'Email/password, OTP, Google OAuth, and session management' },
       { name: 'Me', description: 'Authenticated user profile and settings' },
       { name: 'Ledgers', description: 'User ledgers' },
@@ -147,6 +148,22 @@ function buildOpenApiSpec(req) {
           },
         },
       },
+      '/metrics': {
+        get: {
+          tags: ['Metrics'],
+          summary: 'Basic HTTP and database pool metrics',
+          responses: {
+            200: {
+              description: 'Metrics snapshot',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/MetricsPayload'),
+                },
+              },
+            },
+          },
+        },
+      },
       [`${apiPrefix}/health`]: {
         get: {
           tags: ['Health'],
@@ -157,6 +174,22 @@ function buildOpenApiSpec(req) {
               content: {
                 'application/json': {
                   schema: standardSuccess('#/components/schemas/Health'),
+                },
+              },
+            },
+          },
+        },
+      },
+      [`${apiPrefix}/metrics`]: {
+        get: {
+          tags: ['Metrics'],
+          summary: 'Versioned basic HTTP and database pool metrics',
+          responses: {
+            200: {
+              description: 'Metrics snapshot',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/MetricsPayload'),
                 },
               },
             },
@@ -1680,6 +1713,7 @@ function buildOpenApiSpec(req) {
             },
             400: { $ref: '#/components/responses/Error' },
             401: { $ref: '#/components/responses/Error' },
+            409: { $ref: '#/components/responses/Error' },
             429: { $ref: '#/components/responses/Error' },
           },
         },
@@ -2166,6 +2200,46 @@ function buildOpenApiSpec(req) {
           properties: {
             ok: { type: 'boolean' },
             server_time: { type: 'string', format: 'date-time' },
+          },
+        },
+        MetricsPayload: {
+          type: 'object',
+          properties: {
+            http: {
+              type: 'object',
+              properties: {
+                startedAt: { type: 'string', format: 'date-time' },
+                requestCount: { type: 'integer' },
+                serverErrorCount: { type: 'integer' },
+                errorRate: { type: 'number' },
+                latencyMs: {
+                  type: 'object',
+                  properties: {
+                    average: { type: 'number' },
+                    max: { type: 'number' },
+                    p95: { type: 'number' },
+                  },
+                },
+                statusCounts: {
+                  type: 'object',
+                  additionalProperties: { type: 'integer' },
+                },
+                routeCounts: {
+                  type: 'object',
+                  additionalProperties: { type: 'integer' },
+                },
+              },
+            },
+            db: {
+              type: 'object',
+              properties: {
+                configured: { type: 'boolean' },
+                active: { type: 'boolean' },
+                totalCount: { type: 'integer' },
+                idleCount: { type: 'integer' },
+                waitingCount: { type: 'integer' },
+              },
+            },
           },
         },
         OkResult: {
@@ -3115,7 +3189,11 @@ function buildOpenApiSpec(req) {
                 'getTopCategories',
               ],
             },
-            payload: { type: 'object' },
+            payload: {
+              type: 'object',
+              description:
+                'Action payload. deleteMultipleTransactions requires confirmed=true.',
+            },
           },
         },
         AiActionResultPayload: {

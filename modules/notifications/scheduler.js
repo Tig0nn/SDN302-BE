@@ -1,5 +1,6 @@
 const env = require('../../config/env');
 const { runNotificationJobs } = require('./jobRunner');
+const { redactString } = require('../../utils/redact');
 
 function startNotificationScheduler() {
   if (!env.NOTIFICATION_JOBS_ENABLED) {
@@ -18,7 +19,7 @@ function startNotificationScheduler() {
     } catch (err) {
       console.error({
         job: 'notifications',
-        error: err.message,
+        error: redactString(err.message),
       });
     } finally {
       isRunning = false;

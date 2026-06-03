@@ -5,6 +5,7 @@ const { requireAuth } = require('../../middlewares/auth');
 const aiRateLimit = require('./rateLimit');
 const aiService = require('./aiService');
 const geminiService = require('./geminiService');
+const auditRepository = require('../security/auditRepository');
 
 const router = express.Router();
 
@@ -101,6 +102,23 @@ router.post(
         req.body.action,
         req.body.payload
       );
+
+      await auditRepository.recordAuditEvent(req, 'ai.action_executed', {
+        action: req.body.action,
+        ledgerId: req.body.payload?.ledgerId || null,
+        transactionCount: Array.isArray(result.transactions)
+          ? result.transactions.length
+          : result.transaction
+            ? 1
+            : 0,
+      });
+
+      if (req.body.action === 'deleteMultipleTransactions') {
+        await auditRepository.recordAuditEvent(req, 'transactions.bulk_delete', {
+          source: 'ai',
+          transactionCount: result.transactions.length,
+        });
+      }
 
       sendOk(req, res, result, req.body.action === 'createTransaction' ? 201 : 200);
     } catch (err) {

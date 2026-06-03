@@ -28,6 +28,8 @@ DATABASE_SSL=true
 JWT_SECRET=<long-random-secret>
 GOOGLE_CLIENT_IDS=<ios-client-id>,<android-client-id>,<web-client-id>
 CORS_ORIGINS=<expo-dev-origin>,<frontend-web-origin>
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX=300
 PUBLIC_BASE_URL=https://<railway-service-domain>
 API_PREFIX=/api/v1
 PASSWORD_HASH_ROUNDS=12
@@ -86,6 +88,7 @@ https://<railway-service-domain>/openapi.json
 - `JWT_SECRET`: long random secret for backend JWT signing.
 - `GOOGLE_CLIENT_IDS`: comma-separated Google OAuth client IDs for Expo iOS/Android/Web.
 - `CORS_ORIGINS`: comma-separated frontend origins.
+- `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`: global API rate limit window and request cap per client.
 - `PUBLIC_BASE_URL`: deployed backend URL, used in `/openapi.json` server list.
 - `OTP_SECRET`: long random secret for hashing OTP codes at rest.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: Gmail SMTP/app-password settings for signup OTP delivery.
@@ -98,6 +101,35 @@ npm run migrate
 npm run seed
 npm start
 ```
+
+## Health Checks
+
+Before routing mobile traffic to a new deployment, check:
+
+```txt
+/health
+/health/db
+/metrics
+```
+
+`/health` verifies the HTTP process. `/health/db` verifies PostgreSQL connectivity. `/metrics` exposes request latency, error rate, status counts, and DB pool usage for basic release observation.
+
+## Rollback Plan
+
+If a deployment fails before migrations complete, redeploy the previous successful Railway/Render release and rerun:
+
+```bash
+npm run db:state
+```
+
+If a deployment fails after migrations complete, keep the migrated database in place unless the migration itself is the known cause. The migrations are additive/idempotent for MVP tables, so the preferred rollback is:
+
+1. Redeploy the previous application image/release from Railway or Render.
+2. Confirm `/health` and `/health/db`.
+3. Check `/openapi.json` and a private endpoint with a test token.
+4. Inspect recent logs for `INTERNAL_ERROR` and DB connection errors.
+
+If a migration causes a database-level failure, restore the latest Supabase/Postgres backup from before the deployment, then redeploy the previous application release and run `npm run db:state`.
 
 ## Public API Docs
 

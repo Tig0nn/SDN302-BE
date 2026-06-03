@@ -6,9 +6,15 @@ const jwt = require('jsonwebtoken');
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-with-enough-length';
 
 const db = require('../config/db');
+const env = require('../config/env');
 const app = require('../app');
+const auditRepository = require('../modules/security/auditRepository');
+const metrics = require('../modules/observability/metrics');
+const rateLimit = require('../middlewares/rateLimit');
 
 const originalQuery = db.query;
+const originalRateLimitMax = env.RATE_LIMIT_MAX;
+const originalRateLimitWindowMs = env.RATE_LIMIT_WINDOW_MS;
 
 function normalizeSql(sql) {
   return sql.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -16,6 +22,10 @@ function normalizeSql(sql) {
 
 test.afterEach(function cleanup() {
   db.query = originalQuery;
+  env.RATE_LIMIT_MAX = originalRateLimitMax;
+  env.RATE_LIMIT_WINDOW_MS = originalRateLimitWindowMs;
+  metrics.resetMetrics();
+  rateLimit.resetRateLimit();
 });
 
 function request(path, options = {}) {
@@ -249,6 +259,8 @@ test('GET /openapi.json exposes documented routes', async function () {
   assert.equal(res.body.openapi, '3.0.3');
   assert.equal(res.body.info.title, 'Ví Vi Vu API');
   assert.ok(res.body.paths['/api/v1/auth/email/register']);
+  assert.ok(res.body.paths['/metrics']);
+  assert.ok(res.body.paths['/api/v1/metrics']);
   assert.ok(res.body.paths['/api/v1/auth/email/verify']);
   assert.ok(res.body.paths['/api/v1/auth/email/login']);
   assert.ok(res.body.paths['/api/v1/auth/google']);
@@ -284,6 +296,67 @@ test('GET /openapi.json exposes documented routes', async function () {
   assert.ok(res.body.paths['/api/v1/notifications/{id}/read']);
   assert.ok(res.body.paths['/api/v1/sync/changes']);
   assert.ok(res.body.paths['/api/v1/sync/mutations']);
+});
+
+test('GET /metrics returns HTTP counters and DB pool stats', async function () {
+  metrics.resetMetrics();
+  rateLimit.resetRateLimit();
+
+  await request('/health');
+
+  const res = await request('/metrics');
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.error, null);
+  assert.ok(res.body.data.http.requestCount >= 1);
+  assert.ok('errorRate' in res.body.data.http);
+  assert.ok('p95' in res.body.data.http.latencyMs);
+  assert.equal(typeof res.body.data.db.configured, 'boolean');
+  assert.equal(typeof res.body.data.db.totalCount, 'number');
+});
+
+test('global rate limit returns a standard 429 response', async function () {
+  env.RATE_LIMIT_MAX = 1;
+  env.RATE_LIMIT_WINDOW_MS = 60_000;
+  rateLimit.resetRateLimit();
+
+  const first = await request('/health');
+  const second = await request('/health');
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 429);
+  assert.equal(second.body.error.code, 'RATE_LIMIT_EXCEEDED');
+  assert.ok(second.headers['retry-after']);
+});
+
+test('audit repository redacts sensitive metadata before insert', async function () {
+  let capturedParams;
+
+  db.query = async function fakeQuery(sql, params = []) {
+    assert.match(normalizeSql(sql), /insert into audit_events/);
+    capturedParams = params;
+
+    return { rowCount: 1, rows: [] };
+  };
+
+  await auditRepository.createAuditEvent({
+    eventType: 'test.event',
+    metadata: {
+      apiKey: 'secret-api-key',
+      refreshToken: 'secret-refresh-token',
+      nested: {
+        password: 'secret-password',
+        safe: 'kept',
+      },
+    },
+  });
+
+  const metadata = JSON.parse(capturedParams[5]);
+
+  assert.equal(metadata.apiKey, '[REDACTED]');
+  assert.equal(metadata.refreshToken, '[REDACTED]');
+  assert.equal(metadata.nested.password, '[REDACTED]');
+  assert.equal(metadata.nested.safe, 'kept');
 });
 
 test('GET /docs serves interactive API documentation shell', async function () {

@@ -262,6 +262,31 @@ test('POST /api/v1/ai/chat requires BYOK Gemini key', async function () {
   assert.equal(res.body.error.code, 'GEMINI_KEY_REQUIRED');
 });
 
+test('POST /api/v1/ai/execute-action requires confirmation for bulk delete', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/ai/execute-action', {
+    method: 'POST',
+    body: {
+      action: 'deleteMultipleTransactions',
+      payload: {
+        transactionIds: [
+          '77777777-7777-4777-8777-777777777777',
+          '88888888-8888-4888-8888-888888888888',
+        ],
+      },
+    },
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(
+    res.body.error.code,
+    'AI_BULK_DELETE_CONFIRMATION_REQUIRED'
+  );
+});
+
 test('POST /api/v1/ai/chat fetches backend balance before Gemini response', async function () {
   const queries = installQueryHandler(async function handleQuery(sql, params) {
     if (sql.includes('from ledgers')) {

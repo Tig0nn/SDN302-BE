@@ -26,5 +26,9 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: RATE_LIMIT_MAX
+        value: 300
       - key: PUBLIC_BASE_URL
         sync: false

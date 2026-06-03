@@ -8,6 +8,7 @@ var env = require('./config/env');
 var indexRouter = require('./routes/index');
 var healthRouter = require('./routes/health');
 var docsRouter = require('./routes/docs');
+var metricsRouter = require('./routes/metrics');
 var authRouter = require('./modules/auth/authRoutes');
 var meRouter = require('./modules/users/meRoutes');
 var ledgerRouter = require('./modules/ledgers/ledgerRoutes');
@@ -28,6 +29,8 @@ var deviceRouter = require('./modules/notifications/deviceRoutes');
 var notificationRouter = require('./modules/notifications/notificationRoutes');
 var syncRouter = require('./modules/sync/syncRoutes');
 var requestId = require('./middlewares/requestId');
+var metricsMiddleware = require('./middlewares/metrics');
+var rateLimit = require('./middlewares/rateLimit');
 var notFound = require('./middlewares/notFound');
 var errorHandler = require('./middlewares/errorHandler');
 
@@ -37,6 +40,7 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
 app.use(requestId);
+app.use(metricsMiddleware);
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -67,6 +71,7 @@ app.use(
     credentials: true,
   })
 );
+app.use(rateLimit);
 app.use(logger(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: false }));
@@ -74,8 +79,10 @@ app.use(cookieParser());
 
 app.use('/', indexRouter);
 app.use('/', docsRouter);
+app.use('/metrics', metricsRouter);
 app.use('/health', healthRouter);
 app.use(env.API_PREFIX + '/health', healthRouter);
+app.use(env.API_PREFIX + '/metrics', metricsRouter);
 app.use(env.API_PREFIX + '/auth', authRouter);
 app.use(env.API_PREFIX + '/me', meRouter);
 app.use(env.API_PREFIX + '/ledgers', ledgerRouter);

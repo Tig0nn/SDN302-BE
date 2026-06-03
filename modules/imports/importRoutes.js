@@ -3,6 +3,7 @@ const { z } = require('zod');
 const validate = require('../../middlewares/validate');
 const { requireAuth } = require('../../middlewares/auth');
 const importRepository = require('./importRepository');
+const auditRepository = require('../security/auditRepository');
 
 const router = express.Router();
 
@@ -60,6 +61,14 @@ router.post(
     try {
       const job = await importRepository.previewImport(req.user.id, req.body);
 
+      await auditRepository.recordAuditEvent(req, 'import.preview_created', {
+        jobId: job.id,
+        ledgerId: job.ledgerId,
+        sourceType: job.sourceType,
+        totalRows: job.summary?.totalRows || 0,
+        validCount: job.summary?.validCount || 0,
+        invalidCount: job.summary?.invalidCount || 0,
+      });
       sendOk(req, res, { job }, 201);
     } catch (err) {
       next(err);
@@ -74,6 +83,11 @@ router.post(
     try {
       const result = await importRepository.commitImport(req.user.id, req.params.id);
 
+      await auditRepository.recordAuditEvent(req, 'import.committed', {
+        jobId: result.job.id,
+        ledgerId: result.job.ledgerId,
+        committedCount: result.transactions.length,
+      });
       sendOk(req, res, result, 201);
     } catch (err) {
       next(err);

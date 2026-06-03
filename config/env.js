@@ -21,6 +21,8 @@ const env = {
     process.env.CORS_ORIGINS ||
       'http://localhost:19006,http://localhost:8081,http://localhost:3000'
   ),
+  RATE_LIMIT_WINDOW_MS: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
+  RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX || 300),
   GOOGLE_CLIENT_IDS: parseCsv(
     process.env.GOOGLE_CLIENT_IDS || process.env.GOOGLE_CLIENT_ID || ''
   ),
