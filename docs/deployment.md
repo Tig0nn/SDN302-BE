@@ -27,7 +27,7 @@ DATABASE_URL=<supabase-postgres-connection-string>
 DATABASE_SSL=true
 JWT_SECRET=<long-random-secret>
 GOOGLE_CLIENT_IDS=<ios-client-id>,<android-client-id>,<web-client-id>
-CORS_ORIGINS=<expo-dev-origin>,<frontend-web-origin>
+CORS_ORIGINS=http://localhost:19006,http://localhost:8081,http://localhost:8082,http://localhost:3000,<frontend-web-origin>
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=300
 PUBLIC_BASE_URL=https://<railway-service-domain>
@@ -87,7 +87,7 @@ https://<railway-service-domain>/openapi.json
 - `DATABASE_SSL`: `true` for Supabase.
 - `JWT_SECRET`: long random secret for backend JWT signing.
 - `GOOGLE_CLIENT_IDS`: comma-separated Google OAuth client IDs for Expo iOS/Android/Web.
-- `CORS_ORIGINS`: comma-separated frontend origins.
+- `CORS_ORIGINS`: comma-separated frontend origins, for example `http://localhost:19006,http://localhost:8081,http://localhost:8082,http://localhost:3000,<frontend-web-origin>`.
 - `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`: global API rate limit window and request cap per client.
 - `PUBLIC_BASE_URL`: deployed backend URL, used in `/openapi.json` server list.
 - `OTP_SECRET`: long random secret for hashing OTP codes at rest.
