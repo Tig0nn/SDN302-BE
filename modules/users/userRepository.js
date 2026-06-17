@@ -14,6 +14,14 @@ const USER_FIELDS = `
   updated_at as "updatedAt"
 `;
 
+function createGoogleEmailConflict(message, code = 'GOOGLE_EMAIL_CONFLICT') {
+  const err = new Error(message);
+
+  err.code = code;
+  err.status = 409;
+  return err;
+}
+
 async function upsertGoogleUser(profile) {
   const existing = await db.query(
     `
@@ -35,6 +43,32 @@ async function upsertGoogleUser(profile) {
 
   if (existing.rowCount > 0) {
     return existing.rows[0];
+  }
+
+  if (!profile.emailAuthoritative) {
+    const result = await db.query(
+      `
+        insert into users (google_sub, email, display_name, avatar_url, email_verified_at)
+        values ($1, $2, $3, $4, now())
+        on conflict (email) do nothing
+        returning ${USER_FIELDS}
+      `,
+      [
+        profile.googleSub,
+        profile.email.toLowerCase(),
+        profile.displayName,
+        profile.avatarUrl,
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      throw createGoogleEmailConflict(
+        'Google email requires explicit account linking before it can be used with an existing account',
+        'GOOGLE_EMAIL_LINK_REQUIRED'
+      );
+    }
+
+    return result.rows[0];
   }
 
   const result = await db.query(
@@ -60,11 +94,7 @@ async function upsertGoogleUser(profile) {
   );
 
   if (result.rowCount === 0) {
-    const err = new Error('Email is already linked to another Google account');
-
-    err.code = 'GOOGLE_EMAIL_CONFLICT';
-    err.status = 409;
-    throw err;
+    throw createGoogleEmailConflict('Email is already linked to another Google account');
   }
 
   return result.rows[0];
