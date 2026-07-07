@@ -34,12 +34,25 @@ const env = {
   OTP_TTL_MINUTES: Number(process.env.OTP_TTL_MINUTES || 10),
   OTP_MAX_ATTEMPTS: Number(process.env.OTP_MAX_ATTEMPTS || 5),
   OTP_SECRET: process.env.OTP_SECRET || process.env.JWT_SECRET,
+  EMAIL_PROVIDER: process.env.EMAIL_PROVIDER || '',
+  BREVO_API_KEY: process.env.BREVO_API_KEY || '',
+  BREVO_FROM: process.env.BREVO_FROM || process.env.SMTP_FROM || '',
+  BREVO_API_BASE_URL:
+    process.env.BREVO_API_BASE_URL || 'https://api.brevo.com/v3',
+  BREVO_TIMEOUT_MS: Number(process.env.BREVO_TIMEOUT_MS || 10000),
   SMTP_HOST: process.env.SMTP_HOST || '',
   SMTP_PORT: Number(process.env.SMTP_PORT || 587),
   SMTP_SECURE: process.env.SMTP_SECURE === 'true',
   SMTP_USER: process.env.SMTP_USER || '',
   SMTP_PASS: process.env.SMTP_PASS || '',
   SMTP_FROM: process.env.SMTP_FROM || process.env.SMTP_USER || '',
+  SMTP_CONNECTION_TIMEOUT_MS: Number(
+    process.env.SMTP_CONNECTION_TIMEOUT_MS || 10000
+  ),
+  SMTP_GREETING_TIMEOUT_MS: Number(
+    process.env.SMTP_GREETING_TIMEOUT_MS || 10000
+  ),
+  SMTP_SOCKET_TIMEOUT_MS: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 20000),
   GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
   GEMINI_API_BASE_URL:
     process.env.GEMINI_API_BASE_URL ||

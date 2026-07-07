@@ -1,26 +1,49 @@
 const nodemailer = require('nodemailer');
 const env = require('../../config/env');
 
+function hasBrevoConfig() {
+  return Boolean(env.BREVO_API_KEY && env.BREVO_FROM);
+}
+
 function hasSmtpConfig() {
   return Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.SMTP_FROM);
 }
 
-function assertSmtpConfig() {
-  if (hasSmtpConfig()) return;
+function getEmailProvider() {
+  const configuredProvider = env.EMAIL_PROVIDER.trim().toLowerCase();
+
+  if (configuredProvider) return configuredProvider;
+  if (hasBrevoConfig()) return 'brevo';
+  if (hasSmtpConfig()) return 'smtp';
+
+  return '';
+}
+
+function assertEmailDeliveryConfig() {
+  const provider = getEmailProvider();
+
+  if (provider === 'brevo' && hasBrevoConfig()) return;
+  if (provider === 'smtp' && hasSmtpConfig()) return;
 
   if (env.NODE_ENV !== 'production') {
     return;
   }
 
-  const err = new Error('SMTP email delivery is not configured');
+  const err = new Error('Email delivery is not configured');
 
-  err.code = 'SMTP_NOT_CONFIGURED';
+  if (provider === 'brevo') {
+    err.code = 'BREVO_NOT_CONFIGURED';
+  } else if (provider === 'smtp') {
+    err.code = 'SMTP_NOT_CONFIGURED';
+  } else {
+    err.code = 'EMAIL_DELIVERY_NOT_CONFIGURED';
+  }
   err.status = 500;
   throw err;
 }
 
 function createTransporter() {
-  assertSmtpConfig();
+  assertEmailDeliveryConfig();
 
   if (!hasSmtpConfig()) {
     return null;
@@ -30,6 +53,9 @@ function createTransporter() {
     host: env.SMTP_HOST,
     port: env.SMTP_PORT,
     secure: env.SMTP_SECURE,
+    connectionTimeout: env.SMTP_CONNECTION_TIMEOUT_MS,
+    greetingTimeout: env.SMTP_GREETING_TIMEOUT_MS,
+    socketTimeout: env.SMTP_SOCKET_TIMEOUT_MS,
     auth: {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
@@ -60,20 +86,82 @@ function buildOtpEmail(code) {
   };
 }
 
-async function sendSignupOtp(email, code) {
+function parseBrevoSender(from) {
+  const match = from.match(/^\s*(?:"?([^"<]+)"?\s*)?<([^<>@\s]+@[^<>\s]+)>\s*$/);
+
+  if (!match) {
+    return { email: from.trim() };
+  }
+
+  return {
+    name: match[1]?.trim(),
+    email: match[2].trim(),
+  };
+}
+
+async function sendWithBrevo(email, content) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.BREVO_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `${env.BREVO_API_BASE_URL.replace(/\/+$/, '')}/smtp/email`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'api-key': env.BREVO_API_KEY,
+        },
+        body: JSON.stringify({
+          sender: parseBrevoSender(env.BREVO_FROM),
+          to: [{ email }],
+          subject: content.subject,
+          textContent: content.text,
+          htmlContent: content.html,
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const err = new Error(
+        payload?.message || payload?.error || 'Brevo email delivery failed'
+      );
+
+      err.code = 'BREVO_DELIVERY_FAILED';
+      err.status = 502;
+      throw err;
+    }
+
+    return {
+      delivered: true,
+      provider: 'brevo',
+      messageId: payload?.messageId || null,
+    };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      const timeoutErr = new Error('Brevo email delivery timed out');
+
+      timeoutErr.code = 'BREVO_TIMEOUT';
+      timeoutErr.status = 502;
+      throw timeoutErr;
+    }
+
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function sendWithSmtp(email, content) {
   const transporter = createTransporter();
 
   if (!transporter) {
-    console.info({
-      email,
-      code,
-      message: 'SMTP is not configured; OTP logged for local development only.',
-    });
-
-    return { delivered: false };
+    return null;
   }
-
-  const content = buildOtpEmail(code);
 
   await transporter.sendMail({
     from: env.SMTP_FROM,
@@ -81,10 +169,39 @@ async function sendSignupOtp(email, code) {
     ...content,
   });
 
-  return { delivered: true };
+  return {
+    delivered: true,
+    provider: 'smtp',
+  };
+}
+
+async function sendSignupOtp(email, code) {
+  assertEmailDeliveryConfig();
+  const content = buildOtpEmail(code);
+  const provider = getEmailProvider();
+
+  if (provider === 'brevo' && hasBrevoConfig()) {
+    return sendWithBrevo(email, content);
+  }
+
+  if (provider === 'smtp' && hasSmtpConfig()) {
+    return sendWithSmtp(email, content);
+  }
+
+  if (env.NODE_ENV !== 'production') {
+    console.info({
+      email,
+      code,
+      message: 'Email delivery is not configured; OTP logged for local development only.',
+    });
+
+    return { delivered: false };
+  }
+
+  return { delivered: false };
 }
 
 module.exports = {
-  assertSmtpConfig,
+  assertEmailDeliveryConfig,
   sendSignupOtp,
 };

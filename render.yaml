@@ -32,3 +32,15 @@ services:
         value: 300
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: OTP_SECRET
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_FROM
+        sync: false
+      - key: BREVO_API_BASE_URL
+        value: https://api.brevo.com/v3
+      - key: BREVO_TIMEOUT_MS
+        value: 10000

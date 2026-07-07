@@ -227,7 +227,7 @@ function buildOpenApiSpec(req) {
           },
           responses: {
             200: {
-              description: 'OTP was created and sent when SMTP is configured',
+              description: 'OTP was created and sent when email delivery is configured',
               content: {
                 'application/json': {
                   schema: standardSuccess('#/components/schemas/OtpChallenge'),

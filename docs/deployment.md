@@ -37,6 +37,11 @@ OTP_LENGTH=6
 OTP_TTL_MINUTES=10
 OTP_MAX_ATTEMPTS=5
 OTP_SECRET=<long-random-otp-secret>
+EMAIL_PROVIDER=brevo
+BREVO_API_KEY=<brevo-api-key>
+BREVO_FROM=Vi Vi Vu <verified-sender-email>
+BREVO_API_BASE_URL=https://api.brevo.com/v3
+BREVO_TIMEOUT_MS=10000
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
 SMTP_SECURE=true
@@ -91,7 +96,9 @@ https://<railway-service-domain>/openapi.json
 - `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`: global API rate limit window and request cap per client.
 - `PUBLIC_BASE_URL`: deployed backend URL, used in `/openapi.json` server list.
 - `OTP_SECRET`: long random secret for hashing OTP codes at rest.
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: Gmail SMTP/app-password settings for signup OTP delivery.
+- `EMAIL_PROVIDER`: use `brevo` for production OTP delivery. `smtp` remains available as a fallback.
+- `BREVO_API_KEY`, `BREVO_FROM`, `BREVO_API_BASE_URL`, `BREVO_TIMEOUT_MS`: Brevo HTTP API settings for signup OTP delivery. `BREVO_FROM` must use a sender verified in Brevo.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: optional SMTP fallback settings.
 
 ## Deployment Commands
 

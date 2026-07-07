@@ -36,7 +36,7 @@ async function loginWithGoogle(idToken) {
 async function createAndSendSignupOtp({ email, password, displayName }) {
   const normalizedEmail = otpService.normalizeEmail(email);
 
-  emailService.assertSmtpConfig();
+  emailService.assertEmailDeliveryConfig();
 
   const existingUser = await userRepository.findUserByEmailForAuth(normalizedEmail);
 
@@ -79,7 +79,7 @@ async function registerWithEmail(payload) {
 async function resendSignupOtp(email) {
   const normalizedEmail = otpService.normalizeEmail(email);
 
-  emailService.assertSmtpConfig();
+  emailService.assertEmailDeliveryConfig();
 
   const latestOtp = await emailOtpRepository.findLatestOtp(normalizedEmail, 'signup');
 
