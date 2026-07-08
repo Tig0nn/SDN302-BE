@@ -91,7 +91,7 @@ function buildOpenApiSpec(req) {
       { name: 'Debts', description: 'Borrowed and lent debt tracking' },
       { name: 'Challenges', description: 'Saving challenges and daily check-ins' },
       { name: 'Shopping', description: 'Shopping plans, items, and transaction conversion' },
-      { name: 'AI', description: 'BYOK Gemini assistant, transaction preview, actions, and receipt scan' },
+      { name: 'AI', description: 'Server-managed Gemini assistant, transaction preview, actions, and receipt scan' },
       { name: 'Imports', description: 'CSV, XLSX, and pasted transaction imports' },
       { name: 'Exports', description: 'Transaction CSV, XLSX, and PDF exports' },
       { name: 'Devices', description: 'Expo push device token registration' },
@@ -1750,6 +1750,8 @@ function buildOpenApiSpec(req) {
             },
             400: { $ref: '#/components/responses/Error' },
             401: { $ref: '#/components/responses/Error' },
+            404: { $ref: '#/components/responses/Error' },
+            409: { $ref: '#/components/responses/Error' },
             429: { $ref: '#/components/responses/Error' },
           },
         },
@@ -1757,9 +1759,8 @@ function buildOpenApiSpec(req) {
       [`${apiPrefix}/ai/chat`]: {
         post: {
           tags: ['AI'],
-          summary: 'Chat with Gemini using BYOK',
+          summary: 'Chat with Gemini using the backend chat key',
           security: [{ bearerAuth: [] }],
-          parameters: [{ $ref: '#/components/parameters/GeminiApiKeyHeader' }],
           requestBody: {
             required: true,
             content: {
@@ -1779,17 +1780,18 @@ function buildOpenApiSpec(req) {
             },
             400: { $ref: '#/components/responses/Error' },
             401: { $ref: '#/components/responses/Error' },
+            409: { $ref: '#/components/responses/Error' },
             429: { $ref: '#/components/responses/Error' },
             502: { $ref: '#/components/responses/Error' },
+            504: { $ref: '#/components/responses/Error' },
           },
         },
       },
       [`${apiPrefix}/ai/receipt-scan`]: {
         post: {
           tags: ['AI'],
-          summary: 'Scan receipt image with Gemini Vision using BYOK',
+          summary: 'Scan receipt image with Gemini Vision using the server receipt key',
           security: [{ bearerAuth: [] }],
-          parameters: [{ $ref: '#/components/parameters/GeminiApiKeyHeader' }],
           requestBody: {
             required: true,
             content: {
@@ -1811,6 +1813,7 @@ function buildOpenApiSpec(req) {
             401: { $ref: '#/components/responses/Error' },
             429: { $ref: '#/components/responses/Error' },
             502: { $ref: '#/components/responses/Error' },
+            504: { $ref: '#/components/responses/Error' },
           },
         },
       },
@@ -2127,13 +2130,6 @@ function buildOpenApiSpec(req) {
           in: 'path',
           required: true,
           schema: { type: 'string', format: 'uuid' },
-        },
-        GeminiApiKeyHeader: {
-          name: 'X-Gemini-Api-Key',
-          in: 'header',
-          required: true,
-          schema: { type: 'string' },
-          description: 'Gemini BYOK key supplied by the mobile client. The API does not persist this key.',
         },
       },
       securitySchemes: {
@@ -3144,7 +3140,8 @@ function buildOpenApiSpec(req) {
             transactionDate: { type: 'string', format: 'date' },
             note: { type: 'string' },
             paymentMethod: { type: 'string', enum: ['cash', 'transfer'] },
-            source: { type: 'string', enum: ['ai'] },
+            paymentAccountId: { type: 'string', format: 'uuid', nullable: true },
+            source: { type: 'string', enum: ['ai', 'receipt_scan'] },
             confidence: { type: 'number' },
             rawText: { type: 'string' },
           },
@@ -3164,6 +3161,10 @@ function buildOpenApiSpec(req) {
           type: 'object',
           properties: {
             preview: { $ref: '#/components/schemas/AiTransactionPreview' },
+            previews: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/AiTransactionPreview' },
+            },
             missingFields: {
               type: 'array',
               items: { type: 'string' },
@@ -3172,28 +3173,136 @@ function buildOpenApiSpec(req) {
           },
         },
         AiExecuteActionRequest: {
-          type: 'object',
-          required: ['action'],
-          properties: {
-            action: {
-              type: 'string',
-              enum: [
-                'createTransaction',
-                'getTransactionsByDateRange',
-                'getBalance',
-                'getTotalIncome',
-                'getTotalExpense',
-                'deleteTransaction',
-                'deleteMultipleTransactions',
-                'getBudgetStatus',
-                'getTopCategories',
-              ],
-            },
-            payload: {
+          oneOf: [
+            {
               type: 'object',
-              description:
-                'Action payload. deleteMultipleTransactions requires confirmed=true.',
+              required: ['action', 'payload'],
+              properties: {
+                action: { type: 'string', enum: ['createTransaction'] },
+                payload: { $ref: '#/components/schemas/AiCreateTransactionActionPayload' },
+              },
             },
+            {
+              type: 'object',
+              required: ['action', 'payload'],
+              properties: {
+                action: { type: 'string', enum: ['getTransactionsByDateRange'] },
+                payload: { $ref: '#/components/schemas/AiTransactionListActionPayload' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['action', 'payload'],
+              properties: {
+                action: {
+                  type: 'string',
+                  enum: ['getBalance', 'getTotalIncome', 'getTotalExpense'],
+                },
+                payload: { $ref: '#/components/schemas/AiSummaryActionPayload' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['action', 'payload'],
+              properties: {
+                action: { type: 'string', enum: ['deleteTransaction'] },
+                payload: { $ref: '#/components/schemas/AiDeleteTransactionActionPayload' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['action', 'payload'],
+              properties: {
+                action: { type: 'string', enum: ['deleteMultipleTransactions'] },
+                payload: { $ref: '#/components/schemas/AiDeleteMultipleTransactionsActionPayload' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['action', 'payload'],
+              properties: {
+                action: { type: 'string', enum: ['getBudgetStatus'] },
+                payload: { $ref: '#/components/schemas/AiBudgetStatusActionPayload' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['action', 'payload'],
+              properties: {
+                action: { type: 'string', enum: ['getTopCategories'] },
+                payload: { $ref: '#/components/schemas/AiTopCategoriesActionPayload' },
+              },
+            },
+          ],
+        },
+        AiCreateTransactionActionPayload: {
+          allOf: [{ $ref: '#/components/schemas/CreateTransactionRequest' }],
+          description: 'Same transaction fields as manual create, except source is forced to ai by the backend.',
+        },
+        AiTransactionListActionPayload: {
+          type: 'object',
+          required: ['ledgerId'],
+          properties: {
+            ledgerId: { type: 'string', format: 'uuid' },
+            dateFrom: { type: 'string', format: 'date' },
+            dateTo: { type: 'string', format: 'date' },
+            type: { type: 'string', enum: ['income', 'expense'] },
+            categoryId: { type: 'string', format: 'uuid' },
+            search: { type: 'string', minLength: 1, maxLength: 120 },
+            page: { type: 'integer', minimum: 1, default: 1 },
+            pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+          },
+        },
+        AiSummaryActionPayload: {
+          type: 'object',
+          required: ['ledgerId'],
+          properties: {
+            ledgerId: { type: 'string', format: 'uuid' },
+            dateFrom: { type: 'string', format: 'date' },
+            dateTo: { type: 'string', format: 'date' },
+          },
+        },
+        AiDeleteTransactionActionPayload: {
+          type: 'object',
+          required: ['transactionId'],
+          properties: {
+            transactionId: { type: 'string', format: 'uuid' },
+          },
+        },
+        AiDeleteMultipleTransactionsActionPayload: {
+          type: 'object',
+          required: ['transactionIds'],
+          properties: {
+            transactionIds: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 100,
+              uniqueItems: true,
+              items: { type: 'string', format: 'uuid' },
+            },
+            confirmed: {
+              type: 'boolean',
+              description: 'Must be true before the backend performs the atomic bulk delete.',
+            },
+          },
+        },
+        AiBudgetStatusActionPayload: {
+          type: 'object',
+          required: ['ledgerId', 'month'],
+          properties: {
+            ledgerId: { type: 'string', format: 'uuid' },
+            month: { type: 'string', pattern: '^\\d{4}-(0[1-9]|1[0-2])$' },
+          },
+        },
+        AiTopCategoriesActionPayload: {
+          type: 'object',
+          required: ['ledgerId'],
+          properties: {
+            ledgerId: { type: 'string', format: 'uuid' },
+            type: { type: 'string', enum: ['income', 'expense'], default: 'expense' },
+            dateFrom: { type: 'string', format: 'date' },
+            dateTo: { type: 'string', format: 'date' },
+            limit: { type: 'integer', minimum: 1, maximum: 20, default: 5 },
           },
         },
         AiActionResultPayload: {
@@ -3210,10 +3319,12 @@ function buildOpenApiSpec(req) {
             message: { type: 'string', minLength: 1, maxLength: 2000 },
             ledgerId: { type: 'string', format: 'uuid' },
             conversationId: { type: 'string', format: 'uuid' },
-            saveHistory: { type: 'boolean', default: false },
+            saveHistory: { type: 'boolean', default: true },
             currentDate: { type: 'string', format: 'date' },
             timeZone: { type: 'string' },
           },
+          description:
+            'When conversationId is supplied, the conversation must belong to the same user and ledger. The backend includes a bounded recent-message window in the Gemini prompt.',
         },
         AiChatPayload: {
           type: 'object',
@@ -3221,21 +3332,76 @@ function buildOpenApiSpec(req) {
             message: { type: 'string' },
             toolName: { type: 'string', nullable: true },
             toolResult: { type: 'object', nullable: true },
-            conversation: { $ref: '#/components/schemas/AiConversation' },
+            conversation: {
+              allOf: [{ $ref: '#/components/schemas/AiConversation' }],
+              nullable: true,
+            },
           },
         },
         AiReceiptScanRequest: {
           type: 'object',
-          required: ['imageBase64', 'mimeType'],
+          required: ['ledgerId', 'imageBase64', 'mimeType'],
           properties: {
-            imageBase64: { type: 'string' },
+            ledgerId: { type: 'string', format: 'uuid' },
+            imageBase64: {
+              type: 'string',
+              description:
+                'Raw base64 image data. The backend validates base64 format and decoded byte size.',
+            },
             mimeType: { type: 'string', enum: ['image/jpeg', 'image/png', 'image/webp'] },
+            currentDate: { type: 'string', format: 'date' },
+            timeZone: { type: 'string' },
+            preferredPaymentMethod: { type: 'string', enum: ['cash', 'transfer'] },
+          },
+        },
+        AiReceiptItem: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', nullable: true, maxLength: 160 },
+            quantity: { type: 'number', nullable: true },
+            amountVnd: { type: 'integer', nullable: true, minimum: 0 },
+          },
+        },
+        AiReceipt: {
+          type: 'object',
+          properties: {
+            merchantName: { type: 'string', nullable: true, maxLength: 160 },
+            description: { type: 'string', nullable: true, maxLength: 300 },
+            transactionDate: { type: 'string', format: 'date', nullable: true },
+            totalAmountVnd: { type: 'integer', minimum: 1, nullable: true },
+            categoryName: { type: 'string', nullable: true, maxLength: 120 },
+            paymentMethod: { type: 'string', enum: ['cash', 'transfer'], nullable: true },
+            paymentAccountName: { type: 'string', nullable: true, maxLength: 120 },
+            items: {
+              type: 'array',
+              maxItems: 100,
+              items: { $ref: '#/components/schemas/AiReceiptItem' },
+            },
+            suggestedNote: { type: 'string', nullable: true, maxLength: 500 },
+            confidence: { type: 'number', nullable: true, minimum: 0, maximum: 1 },
+            rawText: { type: 'string', nullable: true, maxLength: 2000 },
+          },
+        },
+        AiReceiptLegacyPayload: {
+          type: 'object',
+          properties: {
+            amount: { type: 'integer', nullable: true },
+            date: { type: 'string', format: 'date', nullable: true },
+            description: { type: 'string' },
+            category: { type: 'string', nullable: true },
           },
         },
         AiReceiptScanPayload: {
           type: 'object',
           properties: {
-            receipt: { type: 'object' },
+            receipt: { $ref: '#/components/schemas/AiReceipt' },
+            legacy: { $ref: '#/components/schemas/AiReceiptLegacyPayload' },
+            transactionPreview: { $ref: '#/components/schemas/AiTransactionPreview' },
+            missingFields: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            clarification: { type: 'string', nullable: true },
           },
         },
         AiConversation: {

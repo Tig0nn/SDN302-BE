@@ -168,6 +168,13 @@ function inferType(text) {
     'freelance',
     'tro cap',
     'duoc tra',
+    'duoc cho',
+    'me cho',
+    'bo cho',
+    'cho tien',
+    'tang',
+    'bieu',
+    'li xi',
     'nhan tien',
   ];
 
@@ -182,7 +189,10 @@ function inferCategoryKey(text, type) {
     type === 'income'
       ? [
           { key: 'salary', words: ['luong', 'thuong', 'thu nhap'] },
-          { key: 'other_income', words: ['freelance', 'tro cap', 'cho tien'] },
+          {
+            key: 'other_income',
+            words: ['freelance', 'tro cap', 'cho tien', 'me cho', 'bo cho', 'tang', 'bieu', 'li xi'],
+          },
         ]
       : [
           {

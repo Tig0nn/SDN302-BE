@@ -42,6 +42,16 @@ BREVO_API_KEY=<brevo-api-key>
 BREVO_FROM=Vi Vi Vu <verified-sender-email>
 BREVO_API_BASE_URL=https://api.brevo.com/v3
 BREVO_TIMEOUT_MS=10000
+GEMINI_MODEL=gemini-1.5-flash
+GEMINI_API_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+GEMINI_TIMEOUT_MS=20000
+GEMINI_CHAT_API_KEY=<gemini-key-for-chatbot>
+GEMINI_RECEIPT_API_KEY=<gemini-key-for-receipt-scan>
+AI_RATE_LIMIT_WINDOW_MS=60000
+AI_RATE_LIMIT_MAX=30
+AI_CHAT_HISTORY_LIMIT=12
+AI_RECEIPT_BODY_LIMIT=4mb
+AI_RECEIPT_IMAGE_MAX_BYTES=3145728
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
 SMTP_SECURE=true
@@ -99,6 +109,10 @@ https://<railway-service-domain>/openapi.json
 - `EMAIL_PROVIDER`: use `brevo` for production OTP delivery. `smtp` remains available as a fallback.
 - `BREVO_API_KEY`, `BREVO_FROM`, `BREVO_API_BASE_URL`, `BREVO_TIMEOUT_MS`: Brevo HTTP API settings for signup OTP delivery. `BREVO_FROM` must use a sender verified in Brevo.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`: optional SMTP fallback settings.
+- `GEMINI_MODEL`, `GEMINI_API_BASE_URL`, `GEMINI_TIMEOUT_MS`: Gemini routing and request timeout.
+- `GEMINI_CHAT_API_KEY`, `GEMINI_RECEIPT_API_KEY`: backend-managed Gemini keys for chatbot and receipt scan. Store them only in environment variables, not in source control.
+- `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_CHAT_HISTORY_LIMIT`: AI endpoint throttling and bounded chat context.
+- `AI_RECEIPT_BODY_LIMIT`, `AI_RECEIPT_IMAGE_MAX_BYTES`: dedicated receipt-scan JSON body and decoded image limits.
 
 ## Deployment Commands
 

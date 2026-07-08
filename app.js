@@ -35,6 +35,8 @@ var notFound = require('./middlewares/notFound');
 var errorHandler = require('./middlewares/errorHandler');
 
 var app = express();
+var defaultJsonParser = express.json({ limit: env.JSON_BODY_LIMIT });
+var aiReceiptJsonParser = express.json({ limit: env.AI_RECEIPT_BODY_LIMIT });
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -73,7 +75,14 @@ app.use(
 );
 app.use(rateLimit);
 app.use(logger(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
+app.use(function selectJsonParser(req, res, next) {
+  if (req.path === env.API_PREFIX + '/ai/receipt-scan') {
+    aiReceiptJsonParser(req, res, next);
+    return;
+  }
+
+  defaultJsonParser(req, res, next);
+});
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 

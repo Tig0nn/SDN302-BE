@@ -514,6 +514,58 @@ async function deleteTransaction(userId, transactionId, client) {
   return mapTransaction(result.rows[0]);
 }
 
+async function bulkDeleteTransactions(userId, transactionIds) {
+  const pool = db.getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const existing = await client.query(
+      `
+        select ${TRANSACTION_FIELDS}
+        from transactions
+        where user_id = $1
+          and id = any($2::uuid[])
+          and deleted_at is null
+        for update
+      `,
+      [userId, transactionIds]
+    );
+
+    if (existing.rowCount !== transactionIds.length) {
+      throw notFoundError();
+    }
+
+    const deleted = await client.query(
+      `
+        update transactions
+        set deleted_at = now()
+        where user_id = $1
+          and id = any($2::uuid[])
+          and deleted_at is null
+        returning ${TRANSACTION_FIELDS}
+      `,
+      [userId, transactionIds]
+    );
+    const byId = new Map(
+      deleted.rows.map((row) => {
+        const transaction = mapTransaction(row);
+
+        return [transaction.id, transaction];
+      })
+    );
+
+    await client.query('commit');
+    return transactionIds.map((transactionId) => byId.get(transactionId));
+  } catch (err) {
+    await client.query('rollback');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function getSummary(userId, filters) {
   await assertLedger(userId, filters.ledgerId);
 
@@ -565,6 +617,7 @@ async function getCalendarSummary(userId, filters) {
 
 module.exports = {
   bulkCreateTransactions,
+  bulkDeleteTransactions,
   createTransaction,
   createTransactionWithClient: insertTransaction,
   deleteTransaction,

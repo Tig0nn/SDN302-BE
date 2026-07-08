@@ -57,8 +57,16 @@ const env = {
   GEMINI_API_BASE_URL:
     process.env.GEMINI_API_BASE_URL ||
     'https://generativelanguage.googleapis.com/v1beta',
+  GEMINI_TIMEOUT_MS: Number(process.env.GEMINI_TIMEOUT_MS || 20000),
+  GEMINI_CHAT_API_KEY: process.env.GEMINI_CHAT_API_KEY || '',
+  GEMINI_RECEIPT_API_KEY: process.env.GEMINI_RECEIPT_API_KEY || '',
   AI_RATE_LIMIT_WINDOW_MS: Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 60000),
   AI_RATE_LIMIT_MAX: Number(process.env.AI_RATE_LIMIT_MAX || 30),
+  AI_CHAT_HISTORY_LIMIT: Number(process.env.AI_CHAT_HISTORY_LIMIT || 12),
+  AI_RECEIPT_BODY_LIMIT: process.env.AI_RECEIPT_BODY_LIMIT || '4mb',
+  AI_RECEIPT_IMAGE_MAX_BYTES: Number(
+    process.env.AI_RECEIPT_IMAGE_MAX_BYTES || 3 * 1024 * 1024
+  ),
   PDF_FONT_PATH: process.env.PDF_FONT_PATH || '',
   EXPO_PUSH_URL:
     process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send',

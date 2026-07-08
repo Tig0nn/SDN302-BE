@@ -28,6 +28,14 @@ function notFoundError() {
   return err;
 }
 
+function invalidLedgerError() {
+  const err = new Error('Ledger not found');
+
+  err.code = 'INVALID_LEDGER';
+  err.status = 400;
+  return err;
+}
+
 function getExecutor(client) {
   return client || db;
 }
@@ -51,6 +59,25 @@ async function assertConversation(userId, conversationId, client) {
   }
 
   return result.rows[0];
+}
+
+async function assertLedger(userId, ledgerId, client) {
+  const executor = getExecutor(client);
+  const result = await executor.query(
+    `
+      select id
+      from ledgers
+      where user_id = $1
+        and id = $2
+        and deleted_at is null
+      limit 1
+    `,
+    [userId, ledgerId]
+  );
+
+  if (result.rowCount === 0) {
+    throw invalidLedgerError();
+  }
 }
 
 async function createConversation(userId, payload, client) {
@@ -104,6 +131,17 @@ async function addMessage(userId, payload, client) {
     ]
   );
 
+  await executor.query(
+    `
+      update ai_conversations
+      set updated_at = now()
+      where user_id = $1
+        and id = $2
+        and deleted_at is null
+    `,
+    [userId, payload.conversationId]
+  );
+
   return result.rows[0];
 }
 
@@ -141,10 +179,31 @@ async function listMessages(userId, conversationId) {
   return result.rows;
 }
 
+async function listRecentMessages(userId, conversationId, limit = 12) {
+  await assertConversation(userId, conversationId);
+
+  const result = await db.query(
+    `
+      select ${MESSAGE_FIELDS}
+      from ai_messages
+      where user_id = $1
+        and conversation_id = $2
+      order by created_at desc
+      limit $3
+    `,
+    [userId, conversationId, limit]
+  );
+
+  return result.rows.reverse();
+}
+
 module.exports = {
   addMessage,
+  assertConversation,
+  assertLedger,
   createConversation,
   getOrCreateConversation,
   listConversations,
   listMessages,
+  listRecentMessages,
 };

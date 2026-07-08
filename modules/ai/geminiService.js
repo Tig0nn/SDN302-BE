@@ -16,12 +16,34 @@ function geminiRequestError(message) {
   return err;
 }
 
-function getGeminiApiKey(req) {
-  return req.get('x-gemini-api-key') || '';
+function geminiTimeoutError() {
+  const err = new Error('Gemini request timed out');
+
+  err.code = 'GEMINI_REQUEST_TIMEOUT';
+  err.status = 504;
+  return err;
 }
 
-function requireGeminiApiKey(req) {
-  const apiKey = getGeminiApiKey(req);
+function getChatGeminiApiKey() {
+  return env.GEMINI_CHAT_API_KEY || '';
+}
+
+function requireChatGeminiApiKey() {
+  const apiKey = getChatGeminiApiKey();
+
+  if (!apiKey) {
+    throw geminiKeyError();
+  }
+
+  return apiKey;
+}
+
+function getReceiptGeminiApiKey(req) {
+  return env.GEMINI_RECEIPT_API_KEY || '';
+}
+
+function requireReceiptGeminiApiKey(req) {
+  const apiKey = getReceiptGeminiApiKey(req);
 
   if (!apiKey) {
     throw geminiKeyError();
@@ -50,6 +72,15 @@ async function generateContent(apiKey, payload) {
 
   const baseUrl = env.GEMINI_API_BASE_URL.replace(/\/$/, '');
   const url = `${baseUrl}/models/${encodeURIComponent(env.GEMINI_MODEL)}:generateContent`;
+  const controller =
+    typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutMs = Number(env.GEMINI_TIMEOUT_MS || 0);
+  const timeout =
+    controller && timeoutMs > 0
+      ? setTimeout(function abortGeminiRequest() {
+          controller.abort();
+        }, timeoutMs)
+      : null;
   let response;
 
   try {
@@ -60,9 +91,18 @@ async function generateContent(apiKey, payload) {
         'x-goog-api-key': apiKey,
       },
       body: JSON.stringify(payload),
+      signal: controller?.signal,
     });
   } catch (err) {
+    if (err.name === 'AbortError') {
+      throw geminiTimeoutError();
+    }
+
     throw geminiRequestError();
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 
   if (!response.ok) {
@@ -79,6 +119,8 @@ async function generateContent(apiKey, payload) {
 
 module.exports = {
   generateContent,
-  getGeminiApiKey,
-  requireGeminiApiKey,
+  getChatGeminiApiKey,
+  getReceiptGeminiApiKey,
+  requireChatGeminiApiKey,
+  requireReceiptGeminiApiKey,
 };
