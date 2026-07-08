@@ -100,6 +100,23 @@ test('GET /health returns standard success payload', async function () {
   assert.equal(res.headers['x-request-id'], res.body.meta.requestId);
 });
 
+test('GET /health/db returns database server time', async function () {
+  db.query = async function fakeQuery(sql) {
+    assert.equal(normalizeSql(sql), 'select now() as server_time');
+
+    return {
+      rowCount: 1,
+      rows: [{ server_time: '2026-06-01T00:00:00.000Z' }],
+    };
+  };
+
+  const res = await request('/health/db');
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.ok, true);
+  assert.equal(res.body.data.server_time, '2026-06-01T00:00:00.000Z');
+});
+
 test('GET / returns service metadata as JSON', async function () {
   const res = await request('/');
 
@@ -211,6 +228,130 @@ test('GET /api/v1/me reads only the authenticated token subject', async function
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.user.id, userA);
   assert.ok(queries.every((query) => !query.params.includes(userB)));
+});
+
+test('PATCH /api/v1/me updates profile and settings before returning fresh payload', async function () {
+  const userA = '11111111-1111-4111-8111-111111111111';
+  const userB = '22222222-2222-4222-8222-222222222222';
+  const ledgerId = '33333333-3333-4333-8333-333333333333';
+  const token = jwt.sign(
+    {
+      sub: userA,
+      email: 'user-a@example.com',
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: 60,
+      issuer: 'vi-vi-vu-api',
+      audience: 'vi-vi-vu-mobile',
+    }
+  );
+  let userLookupCount = 0;
+
+  db.query = async function fakeQuery(sql, params = []) {
+    const normalized = normalizeSql(sql);
+
+    if (normalized.includes('from users')) {
+      assert.equal(params[0], userA);
+      userLookupCount += 1;
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: userA,
+            googleSub: 'google-user-a',
+            email: 'user-a@example.com',
+            displayName: userLookupCount === 1 ? 'User A' : 'Updated User',
+            avatarUrl: null,
+            emailVerifiedAt: '2026-06-01T00:00:00.000Z',
+            locale: 'en-US',
+            timezone: 'UTC',
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-02T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (normalized.includes('update users')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'Updated User');
+      assert.equal(params[2], null);
+      assert.equal(params[3], 'en-US');
+      assert.equal(params[4], 'UTC');
+
+      return {
+        rowCount: 1,
+        rows: [],
+      };
+    }
+
+    if (normalized.includes('update user_settings')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'dark');
+      assert.equal(params[2], false);
+      assert.equal(params[3], true);
+      assert.equal(params[4], false);
+
+      return {
+        rowCount: 1,
+        rows: [],
+      };
+    }
+
+    if (normalized.includes('from user_settings')) {
+      assert.equal(params[0], userA);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            theme: 'dark',
+            dailyReminderEnabled: false,
+            budgetWarningEnabled: true,
+            debtReminderEnabled: false,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-02T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (normalized.includes('from ledgers')) {
+      assert.equal(params[0], userA);
+
+      return {
+        rowCount: 1,
+        rows: [{ id: ledgerId, name: 'Main ledger', isDefault: true }],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${normalized}`);
+  };
+
+  const res = await request(`/api/v1/me?userId=${userB}`, {
+    method: 'PATCH',
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
+    body: {
+      displayName: 'Updated User',
+      locale: 'en-US',
+      timezone: 'UTC',
+      settings: {
+        theme: 'dark',
+        dailyReminderEnabled: false,
+        budgetWarningEnabled: true,
+        debtReminderEnabled: false,
+      },
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.user.displayName, 'Updated User');
+  assert.equal(res.body.data.settings.theme, 'dark');
+  assert.equal(res.body.data.defaultLedger.id, ledgerId);
 });
 
 test('POST /api/v1/auth/google validates idToken', async function () {

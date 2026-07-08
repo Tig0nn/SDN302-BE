@@ -253,6 +253,143 @@ test('GET /api/v1/shopping-plans lists plans with computed totals', async functi
   assert.ok(queries.every((query) => !query.params.includes(userB)));
 });
 
+test('POST /api/v1/shopping-plans creates a plan in an owned ledger', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from ledgers')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return { rowCount: 1, rows: [{ id: ledgerId }] };
+    }
+
+    if (sql.includes('insert into shopping_plans')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+      assert.equal(params[2], 'Tet groceries');
+      assert.equal(params[3], 500000);
+
+      return {
+        rowCount: 1,
+        rows: [planRow({ name: 'Tet groceries', budgetAmountVnd: '500000' })],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/shopping-plans', {
+    method: 'POST',
+    body: {
+      ledgerId,
+      name: 'Tet groceries',
+      budgetAmountVnd: 500000,
+    },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.shoppingPlan.name, 'Tet groceries');
+  assert.equal(res.body.data.shoppingPlan.budgetAmountVnd, 500000);
+});
+
+test('GET /api/v1/shopping-plans/:id returns plan details and items', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from shopping_plans sp') && sql.includes('left join lateral')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], planId);
+
+      return { rowCount: 1, rows: [planRow()] };
+    }
+
+    if (sql.includes('from shopping_items si') && sql.includes('shopping_plan_id = $2')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], planId);
+
+      return {
+        rowCount: 1,
+        rows: [itemRow()],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/shopping-plans/${planId}`);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.plan.id, planId);
+  assert.equal(res.body.data.items[0].name, 'Milk');
+});
+
+test('PATCH /api/v1/shopping-plans/:id updates name and budget', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from shopping_plans sp') && sql.includes('left join lateral')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], planId);
+
+      return { rowCount: 1, rows: [planRow()] };
+    }
+
+    if (sql.includes('update shopping_plans') && sql.includes('budget_amount_vnd = coalesce')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], planId);
+      assert.equal(params[2], null);
+      assert.equal(params[3], 'Weekly groceries');
+      assert.equal(params[4], 300000);
+
+      return {
+        rowCount: 1,
+        rows: [planRow({ name: 'Weekly groceries', budgetAmountVnd: '300000' })],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/shopping-plans/${planId}`, {
+    method: 'PATCH',
+    body: {
+      name: 'Weekly groceries',
+      budgetAmountVnd: 300000,
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.shoppingPlan.name, 'Weekly groceries');
+  assert.equal(res.body.data.shoppingPlan.budgetAmountVnd, 300000);
+});
+
+test('DELETE /api/v1/shopping-plans/:id soft deletes a plan and its items', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    throw new Error(`Unexpected db query: ${sql}`);
+  });
+
+  const clientQueries = installClientHandler(async function handleClientQuery(sql, params) {
+    if (sql.includes('update shopping_plans') && sql.includes('set deleted_at = now()')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], planId);
+
+      return { rowCount: 1, rows: [planRow()] };
+    }
+
+    if (sql.includes('update shopping_items') && sql.includes('shopping_plan_id = $2')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], planId);
+
+      return { rowCount: 2, rows: [] };
+    }
+
+    throw new Error(`Unexpected client query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/shopping-plans/${planId}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.shoppingPlan.id, planId);
+  assert.ok(clientQueries.some((query) => query.sql === 'commit'));
+});
+
 test('POST /api/v1/shopping-plans/:id/items creates an item in an owned plan', async function () {
   installQueryHandler(async function handleQuery(sql, params) {
     if (sql.includes('from shopping_plans sp') && sql.includes('left join lateral')) {
@@ -328,6 +465,52 @@ test('PATCH /api/v1/shopping-items/:id toggles bought state', async function () 
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.shoppingItem.isBought, true);
+});
+
+test('PATCH /api/v1/shopping-items/:id rejects marking linked items unbought', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from shopping_items si') && sql.includes('join shopping_plans sp')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], itemId);
+
+      return {
+        rowCount: 1,
+        rows: [itemRow({ ledgerId, linkedTransactionId: transactionId })],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/shopping-items/${itemId}`, {
+    method: 'PATCH',
+    body: {
+      isBought: false,
+    },
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error.code, 'SHOPPING_ITEM_ALREADY_LINKED');
+});
+
+test('DELETE /api/v1/shopping-items/:id soft deletes an item', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('update shopping_items') && sql.includes('set deleted_at = now()')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], itemId);
+
+      return { rowCount: 1, rows: [itemRow()] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/shopping-items/${itemId}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.shoppingItem.id, itemId);
 });
 
 test('POST /api/v1/shopping-items/:id/convert-to-transaction creates one shopping_plan expense', async function () {
@@ -468,5 +651,42 @@ test('POST /api/v1/shopping-items/:id/convert-to-transaction returns linked tran
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.transaction.id, transactionId);
   assert.equal(res.body.data.idempotent, true);
+  assert.ok(!clientQueries.some((query) => query.sql.includes('insert into transactions')));
+});
+
+test('POST /api/v1/shopping-items/:id/convert-to-transaction rejects unbought items', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    throw new Error(`Unexpected db query: ${sql}`);
+  });
+
+  const clientQueries = installClientHandler(async function handleClientQuery(sql, params) {
+    if (sql.includes('from shopping_items si') && sql.includes('for update of si')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], itemId);
+
+      return {
+        rowCount: 1,
+        rows: [itemRow({ ledgerId, isBought: false })],
+      };
+    }
+
+    throw new Error(`Unexpected client query: ${sql}`);
+  });
+
+  const res = await request(
+    `/api/v1/shopping-items/${itemId}/convert-to-transaction`,
+    {
+      method: 'POST',
+      body: {
+        categoryId,
+        transactionDate: '2026-06-02',
+        paymentMethod: 'cash',
+      },
+    }
+  );
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error.code, 'SHOPPING_ITEM_NOT_BOUGHT');
+  assert.ok(clientQueries.some((query) => query.sql === 'rollback'));
   assert.ok(!clientQueries.some((query) => query.sql.includes('insert into transactions')));
 });

@@ -6,7 +6,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=modules/**/*.js --test-coverage-include=middlewares/**/*.js --test-coverage-include=routes/**/*.js --test-coverage-include=config/**/*.js --test-coverage-lines=60 --test-coverage-branches=60 --test-coverage-functions=60",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=modules/**/*.js --test-coverage-include=middlewares/**/*.js --test-coverage-include=routes/**/*.js --test-coverage-include=config/**/*.js --test-coverage-lines=90 --test-coverage-branches=65 --test-coverage-functions=90",
     "lint": "node scripts/check-syntax.js",
     "verify": "npm run lint && npm run test:coverage",
     "migrate": "node scripts/migrate.js",

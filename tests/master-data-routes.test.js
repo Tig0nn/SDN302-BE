@@ -131,6 +131,34 @@ function installQueryHandler(handler) {
   return queries;
 }
 
+function installClientHandler(handler) {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      const normalized = normalizeSql(sql);
+
+      queries.push({ sql: normalized, params });
+
+      if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+        return { rowCount: 0, rows: [] };
+      }
+
+      return handler(normalized, params);
+    },
+    release() {},
+  };
+
+  db.getPool = function getFakePool() {
+    return {
+      connect: async function connect() {
+        return client;
+      },
+    };
+  };
+
+  return queries;
+}
+
 test.afterEach(function cleanup() {
   db.query = originalQuery;
   db.getPool = originalGetPool;
@@ -212,6 +240,126 @@ test('DELETE /api/v1/ledgers/:id rejects deleting the last ledger', async functi
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.error.code, 'LAST_LEDGER_DELETE_NOT_ALLOWED');
   assert.equal(clientQueries.at(-1).sql, 'rollback');
+});
+
+test('POST /api/v1/ledgers creates a non-default ledger when one already exists', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('insert into ledgers')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'Travel');
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: ledgerId,
+            name: 'Travel',
+            isDefault: false,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/ledgers', {
+    method: 'POST',
+    body: { name: 'Travel' },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.ledger.name, 'Travel');
+  assert.equal(res.body.data.ledger.isDefault, false);
+});
+
+test('PATCH /api/v1/ledgers/:id renames an owned ledger', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('update ledgers') && sql.includes('set name = $3')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+      assert.equal(params[2], 'Renamed');
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: ledgerId,
+            name: 'Renamed',
+            isDefault: true,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-02T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/ledgers/${ledgerId}`, {
+    method: 'PATCH',
+    body: { name: 'Renamed' },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.ledger.name, 'Renamed');
+});
+
+test('DELETE /api/v1/ledgers/:id soft deletes and reassigns default ledger', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    throw new Error(`Unexpected db query: ${sql}`);
+  });
+
+  const clientQueries = installClientHandler(async function handleClientQuery(sql, params) {
+    if (sql.includes('select id, is_default')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return { rowCount: 1, rows: [{ id: ledgerId, isDefault: true }] };
+    }
+
+    if (sql.includes('select count(*)::int as count')) {
+      assert.equal(params[0], userA);
+
+      return { rowCount: 1, rows: [{ count: 2 }] };
+    }
+
+    if (sql.includes('update ledgers') && sql.includes('set deleted_at = now()')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: ledgerId,
+            name: 'Main ledger',
+            isDefault: false,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-02T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (sql.includes('set is_default = true')) {
+      assert.equal(params[0], userA);
+
+      return { rowCount: 1, rows: [] };
+    }
+
+    throw new Error(`Unexpected client query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/ledgers/${ledgerId}`, { method: 'DELETE' });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.ledger.isDefault, false);
+  assert.ok(clientQueries.some((query) => query.sql === 'commit'));
+  assert.ok(clientQueries.some((query) => query.sql.includes('set is_default = true')));
 });
 
 test('GET /api/v1/categories returns a grouped two-level tree', async function () {
@@ -300,6 +448,302 @@ test('PATCH /api/v1/categories/:id rejects system category updates', async funct
 
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.error.code, 'SYSTEM_CATEGORY_READ_ONLY');
+});
+
+test('POST /api/v1/categories creates a custom root category', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('select id from categories')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'expense');
+      assert.equal(params[2], 'Travel');
+      assert.equal(params[3], null);
+      assert.equal(params[4], null);
+
+      return { rowCount: 0, rows: [] };
+    }
+
+    if (sql.includes('insert into categories')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'expense');
+      assert.equal(params[2], 'Travel');
+      assert.equal(params[3], null);
+      assert.equal(params[4], 'plane');
+      assert.equal(params[5], '#0EA5E9');
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: categoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Travel',
+            parentId: null,
+            icon: 'plane',
+            color: '#0EA5E9',
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/categories', {
+    method: 'POST',
+    body: {
+      type: 'expense',
+      name: 'Travel',
+      icon: 'plane',
+      color: '#0EA5E9',
+    },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.category.name, 'Travel');
+  assert.equal(res.body.data.category.isSystem, false);
+});
+
+test('POST /api/v1/categories creates a custom subcategory under a matching parent', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('select id from categories')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'expense');
+      assert.equal(params[2], 'Flights');
+      assert.equal(params[3], categoryId);
+
+      return { rowCount: 0, rows: [] };
+    }
+
+    if (sql.includes('from categories') && sql.includes('limit 1')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], categoryId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: categoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Travel',
+            parentId: null,
+            icon: 'plane',
+            color: '#0EA5E9',
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (sql.includes('insert into categories')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'expense');
+      assert.equal(params[2], 'Flights');
+      assert.equal(params[3], categoryId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: subcategoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Flights',
+            parentId: categoryId,
+            icon: null,
+            color: null,
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/categories', {
+    method: 'POST',
+    body: {
+      type: 'expense',
+      name: 'Flights',
+      parentId: categoryId,
+    },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.category.parentId, categoryId);
+});
+
+test('PATCH /api/v1/categories/:id updates a custom category', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('select id from categories')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'expense');
+      assert.equal(params[2], 'Trip');
+      assert.equal(params[3], null);
+      assert.equal(params[4], categoryId);
+
+      return { rowCount: 0, rows: [] };
+    }
+
+    if (sql.includes('from categories') && sql.includes('limit 1')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], categoryId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: categoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Travel',
+            parentId: null,
+            icon: 'plane',
+            color: '#0EA5E9',
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (sql.includes('update categories') && sql.includes('set name = coalesce')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], categoryId);
+      assert.equal(params[2], 'Trip');
+      assert.equal(params[3], true);
+      assert.equal(params[4], null);
+      assert.equal(params[5], true);
+      assert.equal(params[6], '#22C55E');
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: categoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Trip',
+            parentId: null,
+            icon: null,
+            color: '#22C55E',
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-02T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/categories/${categoryId}`, {
+    method: 'PATCH',
+    body: {
+      name: 'Trip',
+      icon: null,
+      color: '#22C55E',
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.category.name, 'Trip');
+  assert.equal(res.body.data.category.icon, null);
+});
+
+test('DELETE /api/v1/categories/:id soft deletes a custom category and children', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    throw new Error(`Unexpected db query: ${sql}`);
+  });
+
+  const clientQueries = installClientHandler(async function handleClientQuery(sql, params) {
+    if (sql.includes('from categories') && sql.includes('for update')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], categoryId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: categoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Travel',
+            parentId: null,
+            icon: 'plane',
+            color: '#0EA5E9',
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (sql.includes('update categories') && sql.includes('set deleted_at = now()')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], categoryId);
+
+      return {
+        rowCount: 2,
+        rows: [
+          {
+            id: categoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Travel',
+            parentId: null,
+            icon: 'plane',
+            color: '#0EA5E9',
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+          {
+            id: subcategoryId,
+            userId: userA,
+            type: 'expense',
+            name: 'Flights',
+            parentId: categoryId,
+            icon: null,
+            color: null,
+            isSystem: false,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected client query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/categories/${categoryId}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.deletedCategories.length, 2);
+  assert.ok(clientQueries.some((query) => query.sql === 'commit'));
 });
 
 test('GET /api/v1/payment-accounts lists accounts through authenticated user scope', async function () {

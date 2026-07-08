@@ -389,6 +389,67 @@ test('GET /api/v1/transactions/calendar returns daily month summary', async func
   assert.equal(res.body.data.calendar[0].balanceVnd, -30000);
 });
 
+test('GET /api/v1/transactions/:id returns one transaction by owner scope', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from transactions') && sql.includes('limit 1')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], transactionId);
+
+      return { rowCount: 1, rows: [transactionRow()] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/transactions/${transactionId}`);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.transaction.id, transactionId);
+  assert.equal(res.body.data.transaction.amountVnd, 30000);
+});
+
+test('PATCH /api/v1/transactions/:id updates one transaction through repository validation', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from transactions') && sql.includes('limit 1')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], transactionId);
+
+      return { rowCount: 1, rows: [transactionRow()] };
+    }
+
+    if (sql.includes('update transactions') && sql.includes('receipt_image_url = $14')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], transactionId);
+      assert.equal(params[4], 45000);
+      assert.equal(params[10], 'Updated breakfast');
+
+      return {
+        rowCount: 1,
+        rows: [
+          transactionRow({
+            amountVnd: '45000',
+            note: 'Updated breakfast',
+          }),
+        ],
+      };
+    }
+
+    return handleTransactionWriteQuery(sql, params);
+  });
+
+  const res = await request(`/api/v1/transactions/${transactionId}`, {
+    method: 'PATCH',
+    body: {
+      amountVnd: 45000,
+      note: 'Updated breakfast',
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.transaction.amountVnd, 45000);
+  assert.equal(res.body.data.transaction.note, 'Updated breakfast');
+});
+
 test('POST /api/v1/transactions/bulk reuses existing client mutation ids', async function () {
   installQueryHandler(async function handleQuery(sql) {
     throw new Error(`Unexpected db query: ${sql}`);
