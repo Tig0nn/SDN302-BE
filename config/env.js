@@ -29,6 +29,13 @@ const env = {
   JWT_SECRET: process.env.JWT_SECRET,
   ACCESS_TOKEN_TTL_SECONDS: Number(process.env.ACCESS_TOKEN_TTL_SECONDS || 10800),
   REFRESH_TOKEN_TTL_DAYS: Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30),
+  REFRESH_TOKEN_COOKIE_NAME: process.env.REFRESH_TOKEN_COOKIE_NAME || 'refreshToken',
+  COOKIE_SECURE:
+    process.env.COOKIE_SECURE === 'true' ||
+    (process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE !== 'false'),
+  COOKIE_SAMESITE:
+    process.env.COOKIE_SAMESITE ||
+    (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
   PASSWORD_HASH_ROUNDS: Number(process.env.PASSWORD_HASH_ROUNDS || 12),
   OTP_LENGTH: Number(process.env.OTP_LENGTH || 6),
   OTP_TTL_MINUTES: Number(process.env.OTP_TTL_MINUTES || 10),

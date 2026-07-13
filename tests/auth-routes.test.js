@@ -40,6 +40,7 @@ function tokenPair() {
     refreshToken: 'refresh-token',
     tokenType: 'Bearer',
     expiresIn: 900,
+    refreshExpiresAt: '2026-07-01T00:00:00.000Z',
   };
 }
 
@@ -64,6 +65,7 @@ function request(path, options = {}) {
                   'content-length': Buffer.byteLength(body),
                 }
               : {}),
+            ...(options.cookie ? { cookie: options.cookie } : {}),
             ...(options.headers || {}),
           },
         },
@@ -78,6 +80,7 @@ function request(path, options = {}) {
             server.close(function onClose() {
               resolve({
                 statusCode: res.statusCode,
+                setCookie: res.headers['set-cookie'] || [],
                 body:
                   raw && res.headers['content-type']?.includes('application/json')
                     ? JSON.parse(raw)
@@ -101,6 +104,16 @@ function request(path, options = {}) {
       req.end();
     });
   });
+}
+
+function findSetCookie(setCookie, name) {
+  return setCookie.find((entry) => entry.startsWith(`${name}=`));
+}
+
+function cookieHeaderFor(setCookie, name) {
+  const entry = findSetCookie(setCookie, name);
+
+  return entry ? entry.split(';')[0] : '';
 }
 
 function restoreAll() {
@@ -208,29 +221,36 @@ test('auth email and token routes delegate to services and record audit events',
   });
   const refresh = await request('/api/v1/auth/refresh', {
     method: 'POST',
-    body: {
-      refreshToken: 'old-refresh-token',
-    },
+    cookie: 'refreshToken=old-refresh-token',
   });
   const logout = await request('/api/v1/auth/logout', {
     method: 'POST',
-    body: {
-      refreshToken: 'refresh-token',
-    },
+    cookie: cookieHeaderFor(refresh.setCookie, 'refreshToken'),
   });
 
   assert.equal(register.statusCode, 200);
   assert.equal(register.body.data.delivered, true);
   assert.equal(verify.statusCode, 200);
   assert.equal(verify.body.data.user.email, 'new@example.com');
+  assert.equal(verify.body.data.tokens.refreshToken, undefined);
+  const verifyCookie = findSetCookie(verify.setCookie, 'refreshToken');
+  assert.ok(verifyCookie.includes('HttpOnly'));
+  assert.ok(verifyCookie.includes('Expires=Wed, 01 Jul 2026'));
   assert.equal(login.statusCode, 200);
   assert.equal(login.body.data.tokens.accessToken, 'access-token');
+  assert.equal(login.body.data.tokens.refreshToken, undefined);
   assert.equal(resend.statusCode, 200);
   assert.equal(resend.body.data.delivered, false);
   assert.equal(refresh.statusCode, 200);
-  assert.equal(refresh.body.data.tokens.refreshToken, 'refresh-token');
+  assert.equal(refresh.body.data.tokens.accessToken, 'access-token');
+  assert.equal(refresh.body.data.tokens.refreshToken, undefined);
+  assert.equal(
+    cookieHeaderFor(refresh.setCookie, 'refreshToken'),
+    'refreshToken=refresh-token'
+  );
   assert.equal(logout.statusCode, 200);
   assert.deepEqual(logout.body.data, { ok: true });
+  assert.ok(findSetCookie(logout.setCookie, 'refreshToken').includes('refreshToken=;'));
   assert.deepEqual(
     auditEvents.map((event) => event.eventType),
     [

@@ -258,6 +258,36 @@ test('GET /api/v1/analytics/monthly-trend returns income versus expense rows', a
   assert.equal(res.body.data.months[0].balanceVnd, 14970000);
 });
 
+test('GET /api/v1/analytics/daily-trend returns income versus expense rows per day', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('group by transaction_date') && sql.includes('totalincomevnd')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            date: '2026-06-01',
+            totalIncomeVnd: '15000000',
+            totalExpenseVnd: '30000',
+            balanceVnd: '14970000',
+            transactionCount: 2,
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/analytics/daily-trend?ledgerId=${ledgerId}`);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.days[0].date, '2026-06-01');
+  assert.equal(res.body.data.days[0].balanceVnd, 14970000);
+});
+
 test('GET /api/v1/analytics/fluctuation returns day-over-day changes', async function () {
   installQueryHandler(async function handleQuery(sql, params) {
     if (sql.includes('with daily as')) {
