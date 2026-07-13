@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: vi-vi-vu-api
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PREFIX
+        value: /api/v1
+      - key: JSON_BODY_LIMIT
+        value: 1mb
+      - key: DATABASE_SSL
+        value: true
+      - key: ACCESS_TOKEN_TTL_SECONDS
+        value: 10800
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: 30
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_IDS
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: RATE_LIMIT_MAX
+        value: 300
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: OTP_SECRET
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_FROM
+        sync: false
+      - key: BREVO_API_BASE_URL
+        value: https://api.brevo.com/v3
+      - key: BREVO_TIMEOUT_MS
+        value: 10000

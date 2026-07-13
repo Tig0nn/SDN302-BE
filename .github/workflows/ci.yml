@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "codex/**"
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: vi_vi_vu_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vi_vi_vu_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vi_vi_vu_test
+      DATABASE_SSL: "false"
+      JWT_SECRET: ci-test-secret-with-enough-length
+      OTP_SECRET: ci-otp-secret-with-enough-length
+      GOOGLE_CLIENT_IDS: ci-google-client-id.apps.googleusercontent.com
+      CORS_ORIGINS: http://localhost:19006,http://localhost:8081,http://localhost:3000
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX: 300
+      NOTIFICATION_JOBS_ENABLED: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Prepare test database
+        run: npm run migrate && npm run seed && npm run db:state
+
+      - name: Test with coverage threshold
+        run: npm run test:coverage
