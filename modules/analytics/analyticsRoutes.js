@@ -88,21 +88,6 @@ router.get(
 );
 
 router.get(
-  '/daily-trend',
-  requireAuth,
-  validate({ query: baseQuerySchema }),
-  async function getDailyTrend(req, res, next) {
-    try {
-      const days = await analyticsRepository.getDailyTrend(req.user.id, req.query);
-
-      sendOk(req, res, { days });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-router.get(
   '/monthly-trend',
   requireAuth,
   validate({ query: baseQuerySchema }),

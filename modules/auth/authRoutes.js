@@ -18,32 +18,6 @@ function sendOk(req, res, data) {
   });
 }
 
-const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: env.COOKIE_SECURE,
-  sameSite: env.COOKIE_SAMESITE,
-  path: '/api/v1/auth',
-};
-
-function setRefreshCookie(res, refreshToken, expiresAt) {
-  res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, refreshToken, {
-    ...REFRESH_COOKIE_OPTIONS,
-    expires: new Date(expiresAt),
-  });
-}
-
-function clearRefreshCookie(res) {
-  res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, REFRESH_COOKIE_OPTIONS);
-}
-
-function sendTokenResult(req, res, result) {
-  setRefreshCookie(res, result.tokens.refreshToken, result.tokens.refreshExpiresAt);
-
-  const { refreshToken, ...tokensWithoutRefresh } = result.tokens;
-
-  sendOk(req, res, { ...result, tokens: tokensWithoutRefresh });
-}
-
 router.post(
   '/email/register',
   validate({
@@ -88,7 +62,7 @@ router.post(
         },
         result.user.id
       );
-      sendTokenResult(req, res, result);
+      sendOk(req, res, result);
     } catch (err) {
       next(err);
     }
@@ -115,7 +89,7 @@ router.post(
         },
         result.user.id
       );
-      sendTokenResult(req, res, result);
+      sendOk(req, res, result);
     } catch (err) {
       next(err);
     }
@@ -163,52 +137,54 @@ router.post(
         },
         result.user.id
       );
-      sendTokenResult(req, res, result);
+      sendOk(req, res, result);
     } catch (err) {
       next(err);
     }
   }
 );
 
-router.post('/refresh', async function refresh(req, res, next) {
-  try {
-    const refreshToken = req.cookies?.[env.REFRESH_TOKEN_COOKIE_NAME];
+router.post(
+  '/refresh',
+  validate({
+    body: z.object({
+      refreshToken: z.string().min(1),
+    }),
+  }),
+  async function refresh(req, res, next) {
+    try {
+      const result = await authService.refreshTokens(req.body.refreshToken);
 
-    if (!refreshToken) {
-      const err = new Error('Invalid or expired refresh token');
-
-      err.code = 'INVALID_REFRESH_TOKEN';
-      err.status = 401;
+      await auditRepository.recordAuditEvent(
+        req,
+        'auth.refresh',
+        {},
+        result.user.id
+      );
+      sendOk(req, res, result);
+    } catch (err) {
       next(err);
-      return;
     }
-
-    const result = await authService.refreshTokens(refreshToken);
-
-    await auditRepository.recordAuditEvent(
-      req,
-      'auth.refresh',
-      {},
-      result.user.id
-    );
-    sendTokenResult(req, res, result);
-  } catch (err) {
-    next(err);
   }
-});
+);
 
-router.post('/logout', async function logout(req, res, next) {
-  try {
-    const refreshToken = req.cookies?.[env.REFRESH_TOKEN_COOKIE_NAME];
+router.post(
+  '/logout',
+  validate({
+    body: z.object({
+      refreshToken: z.string().min(1).optional(),
+    }),
+  }),
+  async function logout(req, res, next) {
+    try {
+      await authService.logout(req.body.refreshToken);
 
-    await authService.logout(refreshToken);
-    clearRefreshCookie(res);
-
-    await auditRepository.recordAuditEvent(req, 'auth.logout');
-    sendOk(req, res, { ok: true });
-  } catch (err) {
-    next(err);
+      await auditRepository.recordAuditEvent(req, 'auth.logout');
+      sendOk(req, res, { ok: true });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 module.exports = router;

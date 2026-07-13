@@ -72,16 +72,6 @@ function mapMonthlyTrend(row) {
   };
 }
 
-function mapDailyTrend(row) {
-  return {
-    date: row.date,
-    totalIncomeVnd: Number(row.totalIncomeVnd || 0),
-    totalExpenseVnd: Number(row.totalExpenseVnd || 0),
-    balanceVnd: Number(row.balanceVnd || 0),
-    transactionCount: Number(row.transactionCount || 0),
-  };
-}
-
 function mapFluctuation(row) {
   return {
     date: row.date,
@@ -221,32 +211,6 @@ async function getMonthlyTrend(userId, filters) {
   return result.rows.map(mapMonthlyTrend);
 }
 
-async function getDailyTrend(userId, filters) {
-  await assertLedger(userId, filters.ledgerId);
-
-  const result = await db.query(
-    `
-      select
-        transaction_date::text as date,
-        coalesce(sum(amount_vnd) filter (where type = 'income'), 0) as "totalIncomeVnd",
-        coalesce(sum(amount_vnd) filter (where type = 'expense'), 0) as "totalExpenseVnd",
-        coalesce(sum(case when type = 'income' then amount_vnd else -amount_vnd end), 0) as "balanceVnd",
-        count(*)::int as "transactionCount"
-      from transactions
-      where user_id = $1
-        and ledger_id = $2
-        and deleted_at is null
-        and ($3::date is null or transaction_date >= $3::date)
-        and ($4::date is null or transaction_date <= $4::date)
-      group by transaction_date
-      order by transaction_date asc
-    `,
-    baseFilterParams(userId, filters)
-  );
-
-  return result.rows.map(mapDailyTrend);
-}
-
 async function getFluctuation(userId, filters) {
   await assertLedger(userId, filters.ledgerId);
 
@@ -296,7 +260,6 @@ async function getFluctuation(userId, filters) {
 module.exports = {
   getCategoryBreakdown,
   getDailySpending,
-  getDailyTrend,
   getFluctuation,
   getMonthlyTrend,
   getOverview,
