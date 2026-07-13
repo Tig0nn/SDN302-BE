@@ -1,6 +1,7 @@
 const express = require('express');
 const { z } = require('zod');
 const validate = require('../../middlewares/validate');
+const { requireAuth } = require('../../middlewares/auth');
 const authService = require('./authService');
 const env = require('../../config/env');
 const auditRepository = require('../security/auditRepository');
@@ -119,6 +120,50 @@ router.post(
 );
 
 router.post(
+  '/email/forgot-password',
+  validate({
+    body: z.object({
+      email: z.string().email(),
+    }),
+  }),
+  async function forgotPassword(req, res, next) {
+    try {
+      const result = await authService.requestPasswordReset(req.body.email);
+
+      await auditRepository.recordAuditEvent(req, 'auth.password_reset_requested', {
+        email: maskEmail(result.email),
+      });
+      sendOk(req, res, { ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/email/reset-password',
+  validate({
+    body: z.object({
+      email: z.string().email(),
+      otpCode: z.string().length(env.OTP_LENGTH).regex(/^\d+$/),
+      newPassword: z.string().min(8).max(128),
+    }),
+  }),
+  async function resetPassword(req, res, next) {
+    try {
+      const result = await authService.resetPassword(req.body);
+
+      await auditRepository.recordAuditEvent(req, 'auth.password_reset_completed', {
+        email: maskEmail(result.email),
+      });
+      sendOk(req, res, { ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
   '/google',
   validate({
     body: z.object({
@@ -132,6 +177,33 @@ router.post(
       await auditRepository.recordAuditEvent(
         req,
         'auth.google_login',
+        {
+          email: maskEmail(result.user.email),
+        },
+        result.user.id
+      );
+      sendOk(req, res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/google/link',
+  requireAuth,
+  validate({
+    body: z.object({
+      idToken: z.string().min(1),
+    }),
+  }),
+  async function linkGoogleAccount(req, res, next) {
+    try {
+      const result = await authService.linkGoogleAccount(req.user, req.body.idToken);
+
+      await auditRepository.recordAuditEvent(
+        req,
+        'auth.google_linked',
         {
           email: maskEmail(result.user.email),
         },

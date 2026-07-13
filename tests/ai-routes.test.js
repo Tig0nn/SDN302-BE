@@ -445,6 +445,160 @@ test('POST /api/v1/ai/chat fetches backend balance before Gemini response', asyn
   assert.equal(fetchCalls.length, 1);
 });
 
+test('POST /api/v1/ai/chat detects budget-status intent and grounds the reply in real data', async function () {
+  env.GEMINI_CHAT_API_KEY = 'server-chat-key';
+
+  const queries = installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from ledgers')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return { rowCount: 1, rows: [{ id: ledgerId }] };
+    }
+
+    if (sql.includes('from budgets b') && sql.includes('left join lateral')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+      assert.equal(params[2], '2026-06-01');
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: '66666666-6666-4666-8666-666666666666',
+            userId: userA,
+            ledgerId,
+            categoryId: expenseCategoryId,
+            categoryName: 'An uong',
+            month: '2026-06-01',
+            limitAmountVnd: '2000000',
+            warningThreshold: 80,
+            spentAmountVnd: '1500000',
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+  const fetchCalls = [];
+
+  global.fetch = async function fakeFetch(url, options) {
+    fetchCalls.push({ url, options });
+
+    return {
+      ok: true,
+      async json() {
+        return {
+          candidates: [
+            { content: { parts: [{ text: 'Ban con 500000 VND cho danh muc An uong.' }] } },
+          ],
+        };
+      },
+    };
+  };
+
+  const res = await request('/api/v1/ai/chat', {
+    method: 'POST',
+    body: {
+      ledgerId,
+      message: 'ngan sach thang nay cua toi the nao',
+      currentDate: '2026-06-15',
+      saveHistory: false,
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.toolName, 'getBudgetStatus');
+  assert.equal(res.body.data.toolResult.budgets[0].spentAmountVnd, 1500000);
+  assert.ok(queries.some((query) => query.sql.includes('from budgets b')));
+  assert.equal(fetchCalls.length, 1);
+});
+
+test('POST /api/v1/ai/chat detects transaction-history intent and grounds the reply in real data', async function () {
+  env.GEMINI_CHAT_API_KEY = 'server-chat-key';
+
+  const queries = installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from ledgers')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return { rowCount: 1, rows: [{ id: ledgerId }] };
+    }
+
+    if (sql.includes('from transactions t') && sql.includes('select count(*)')) {
+      return { rowCount: 1, rows: [{ count: 1 }] };
+    }
+
+    if (sql.includes('from transactions t')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], ledgerId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: '77777777-7777-4777-8777-777777777777',
+            userId: userA,
+            ledgerId,
+            type: 'expense',
+            amountVnd: '50000',
+            categoryId: expenseCategoryId,
+            categoryNameSnapshot: 'An uong',
+            subcategoryId: null,
+            subcategoryNameSnapshot: null,
+            transactionDate: '2026-06-15',
+            note: 'An trua',
+            paymentMethod: 'cash',
+            paymentAccountId: null,
+            receiptImageUrl: null,
+            source: 'manual',
+            clientMutationId: null,
+            createdAt: '2026-06-15T00:00:00.000Z',
+            updatedAt: '2026-06-15T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+  const fetchCalls = [];
+
+  global.fetch = async function fakeFetch(url, options) {
+    fetchCalls.push({ url, options });
+
+    return {
+      ok: true,
+      async json() {
+        return {
+          candidates: [
+            { content: { parts: [{ text: 'Hom nay ban co 1 giao dich an trua 50000 VND.' }] } },
+          ],
+        };
+      },
+    };
+  };
+
+  const res = await request('/api/v1/ai/chat', {
+    method: 'POST',
+    body: {
+      ledgerId,
+      message: 'giao dich hom nay cua toi',
+      currentDate: '2026-06-15',
+      saveHistory: false,
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.toolName, 'getTransactionsByDateRange');
+  assert.equal(res.body.data.toolResult.transactions.length, 1);
+  assert.ok(queries.some((query) => query.sql.includes('from transactions t')));
+  assert.equal(fetchCalls.length, 1);
+});
+
 test('POST /api/v1/ai/chat saves conversation history by default', async function () {
   env.GEMINI_CHAT_API_KEY = 'server-chat-key';
 

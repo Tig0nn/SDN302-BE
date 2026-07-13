@@ -129,6 +129,26 @@ function resolvePdfFontPath() {
   return null;
 }
 
+function resolvePdfBoldFontPath() {
+  const candidates = [
+    env.PDF_BOLD_FONT_PATH,
+    path.join(process.cwd(), 'assets', 'fonts', 'NotoSans-Bold.ttf'),
+    '/usr/share/fonts/noto/NotoSans-Bold.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf',
+    '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
+    '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+    'C:\\Windows\\Fonts\\arialbd.ttf',
+  ];
+
+  for (const candidate of candidates) {
+    const found = existingFile(candidate);
+
+    if (found) return found;
+  }
+
+  return null;
+}
+
 function formatVnd(value) {
   return Number(value || 0).toLocaleString('vi-VN');
 }
@@ -199,8 +219,9 @@ async function createPdf(transactions) {
     const doc = new PDFDocument({ size: 'A4', margin: 36 });
     const chunks = [];
     const fontPath = resolvePdfFontPath();
+    const boldFontPath = resolvePdfBoldFontPath();
     const fonts = fontPath
-      ? { regular: 'ViViVu', bold: 'ViViVu-Bold' }
+      ? { regular: 'ViViVu', bold: boldFontPath ? 'ViViVu-Bold' : 'ViViVu' }
       : { regular: 'Helvetica', bold: 'Helvetica-Bold' };
 
     doc.on('data', (chunk) => chunks.push(chunk));
@@ -209,7 +230,7 @@ async function createPdf(transactions) {
 
     if (fontPath) {
       doc.registerFont('ViViVu', fontPath);
-      doc.registerFont('ViViVu-Bold', fontPath);
+      doc.registerFont('ViViVu-Bold', boldFontPath || fontPath);
     }
 
     doc.font(fonts.bold).fontSize(16).text('Vi Vi Vu - Bao cao giao dich');

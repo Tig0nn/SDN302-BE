@@ -310,6 +310,21 @@ function detectToolIntent(message) {
     return 'getTotalIncome';
   }
 
+  if (
+    normalized.includes('ngan sach') ||
+    normalized.includes('con lai bao nhieu de chi')
+  ) {
+    return 'getBudgetStatus';
+  }
+
+  if (
+    normalized.includes('giao dich') ||
+    normalized.includes('chi tieu gan day') ||
+    normalized.includes('lich su')
+  ) {
+    return 'getTransactionsByDateRange';
+  }
+
   return null;
 }
 
@@ -324,6 +339,24 @@ function buildToolPayload(action, message, payload) {
       ledgerId: payload.ledgerId,
       type: 'expense',
       limit: 5,
+      ...range,
+    };
+  }
+
+  if (action === 'getBudgetStatus') {
+    const today = parser.todayInTimeZone(payload.timeZone, payload.currentDate);
+
+    return {
+      ledgerId: payload.ledgerId,
+      month: today.slice(0, 7),
+    };
+  }
+
+  if (action === 'getTransactionsByDateRange') {
+    return {
+      ledgerId: payload.ledgerId,
+      page: 1,
+      pageSize: 20,
       ...range,
     };
   }

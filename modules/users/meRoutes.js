@@ -3,6 +3,9 @@ const { z } = require('zod');
 const validate = require('../../middlewares/validate');
 const { requireAuth } = require('../../middlewares/auth');
 const userRepository = require('./userRepository');
+const authService = require('../auth/authService');
+const sessionRepository = require('../auth/sessionRepository');
+const auditRepository = require('../security/auditRepository');
 
 const router = express.Router();
 
@@ -64,6 +67,68 @@ router.patch(
       }
 
       sendOk(req, res, await buildMePayload(req.user.id));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/change-password',
+  requireAuth,
+  validate({
+    body: z.object({
+      currentPassword: z.string().min(1),
+      newPassword: z.string().min(8).max(128),
+    }),
+  }),
+  async function changePassword(req, res, next) {
+    try {
+      await authService.changePassword(req.user, req.body);
+
+      await auditRepository.recordAuditEvent(req, 'auth.password_changed', {}, req.user.id);
+      sendOk(req, res, { ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.get('/sessions', requireAuth, async function getSessions(req, res, next) {
+  try {
+    const sessions = await sessionRepository.listActiveSessionsForUser(req.user.id);
+
+    sendOk(req, res, { sessions });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete(
+  '/sessions/:id',
+  requireAuth,
+  validate({ params: z.object({ id: z.string().uuid() }) }),
+  async function revokeSession(req, res, next) {
+    try {
+      await sessionRepository.revokeSessionForUser(req.user.id, req.params.id);
+
+      await auditRepository.recordAuditEvent(req, 'auth.session_revoked', {}, req.user.id);
+      sendOk(req, res, { ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/sessions/revoke-all',
+  requireAuth,
+  async function revokeAllSessions(req, res, next) {
+    try {
+      await sessionRepository.revokeAllSessionsForUser(req.user.id);
+
+      await auditRepository.recordAuditEvent(req, 'auth.sessions_revoked_all', {}, req.user.id);
+      sendOk(req, res, { ok: true });
     } catch (err) {
       next(err);
     }

@@ -68,6 +68,7 @@ const env = {
     process.env.AI_RECEIPT_IMAGE_MAX_BYTES || 3 * 1024 * 1024
   ),
   PDF_FONT_PATH: process.env.PDF_FONT_PATH || '',
+  PDF_BOLD_FONT_PATH: process.env.PDF_BOLD_FONT_PATH || '',
   EXPO_PUSH_URL:
     process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send',
   NOTIFICATION_JOBS_ENABLED:

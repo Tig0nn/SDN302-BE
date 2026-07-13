@@ -33,6 +33,27 @@ async function loginWithGoogle(idToken) {
   return buildTokenResponse(user, session, refreshToken);
 }
 
+/**
+ * Liên kết Google với tài khoản email/password đang đăng nhập. Yêu cầu email
+ * của Google token khớp với email của tài khoản hiện tại, để tránh liên kết
+ * nhầm Google account của người khác.
+ */
+async function linkGoogleAccount(currentUser, idToken) {
+  const profile = await googleAuthService.verifyGoogleIdToken(idToken);
+
+  if (currentUser.email.toLowerCase() !== profile.email.toLowerCase()) {
+    const err = new Error('Google account email does not match the current account email');
+
+    err.code = 'GOOGLE_EMAIL_MISMATCH';
+    err.status = 409;
+    throw err;
+  }
+
+  const user = await userRepository.linkGoogleAccount(currentUser.id, profile.googleSub);
+
+  return { user };
+}
+
 async function createAndSendSignupOtp({ email, password, displayName }) {
   const normalizedEmail = otpService.normalizeEmail(email);
 
@@ -119,6 +140,110 @@ async function resendSignupOtp(email) {
     otpTtlMinutes: env.OTP_TTL_MINUTES,
     delivered: delivery.delivered,
   };
+}
+
+/**
+ * Yêu cầu đặt lại mật khẩu - luôn trả về cùng 1 shape bất kể email có tồn
+ * tại hay không, để không lộ thông tin tài khoản nào đang được dùng.
+ */
+async function requestPasswordReset(email) {
+  const normalizedEmail = otpService.normalizeEmail(email);
+
+  emailService.assertEmailDeliveryConfig();
+
+  const user = await userRepository.findUserByEmailForAuth(normalizedEmail);
+
+  if (user) {
+    const code = otpService.createOtpCode();
+    const expiresAt = otpService.getOtpExpiry();
+
+    await emailOtpRepository.createOtp({
+      email: normalizedEmail,
+      purpose: 'password_reset',
+      codeHash: otpService.hashOtpCode(normalizedEmail, 'password_reset', code),
+      expiresAt,
+      userId: user.id,
+    });
+    await emailService.sendPasswordResetOtp(normalizedEmail, code);
+  }
+
+  return { email: normalizedEmail };
+}
+
+async function resetPassword({ email, otpCode, newPassword }) {
+  const normalizedEmail = otpService.normalizeEmail(email);
+  const otp = await emailOtpRepository.findActiveOtp(normalizedEmail, 'password_reset');
+
+  if (!otp || !otp.userId) {
+    const err = new Error('OTP is invalid or expired');
+
+    err.code = 'INVALID_OR_EXPIRED_OTP';
+    err.status = 400;
+    throw err;
+  }
+
+  if (otp.attempts >= otp.maxAttempts) {
+    await emailOtpRepository.consumeOtp(otp.id);
+
+    const err = new Error('OTP attempt limit exceeded');
+
+    err.code = 'OTP_ATTEMPT_LIMIT_EXCEEDED';
+    err.status = 429;
+    throw err;
+  }
+
+  const isValid = otpService.verifyOtpCode(
+    normalizedEmail,
+    'password_reset',
+    otpCode,
+    otp.codeHash
+  );
+
+  if (!isValid) {
+    await emailOtpRepository.incrementAttempts(otp.id);
+
+    const err = new Error('OTP is invalid or expired');
+
+    err.code = 'INVALID_OR_EXPIRED_OTP';
+    err.status = 400;
+    throw err;
+  }
+
+  const passwordHash = await passwordService.hashPassword(newPassword);
+
+  await userRepository.updatePasswordHash(otp.userId, passwordHash);
+  await emailOtpRepository.consumeOtp(otp.id);
+  await sessionRepository.revokeAllSessionsForUser(otp.userId);
+
+  return { email: normalizedEmail };
+}
+
+/** Đổi mật khẩu khi đang đăng nhập (khác luồng quên mật khẩu qua OTP). */
+async function changePassword(currentUser, { currentPassword, newPassword }) {
+  const user = await userRepository.findUserByEmailForAuth(currentUser.email);
+
+  if (!user?.passwordHash) {
+    const err = new Error('This account has no password set (Google-only login)');
+
+    err.code = 'NO_PASSWORD_SET';
+    err.status = 409;
+    throw err;
+  }
+
+  const isValid = await passwordService.verifyPassword(currentPassword, user.passwordHash);
+
+  if (!isValid) {
+    const err = new Error('Current password is incorrect');
+
+    err.code = 'INVALID_CURRENT_PASSWORD';
+    err.status = 401;
+    throw err;
+  }
+
+  const passwordHash = await passwordService.hashPassword(newPassword);
+
+  await userRepository.updatePasswordHash(user.id, passwordHash);
+  await sessionRepository.revokeAllSessionsForUser(user.id);
 }
 
 async function verifySignupOtp({ email, otpCode }) {
@@ -263,9 +388,13 @@ async function logout(refreshToken) {
 
 module.exports = {
   loginWithGoogle,
+  linkGoogleAccount,
   loginWithEmail,
   registerWithEmail,
   resendSignupOtp,
+  requestPasswordReset,
+  resetPassword,
+  changePassword,
   verifySignupOtp,
   refreshTokens,
   logout,

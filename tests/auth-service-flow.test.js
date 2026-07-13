@@ -24,6 +24,7 @@ const originals = {
   consumeOtp: emailOtpRepository.consumeOtp,
   assertEmailDeliveryConfig: emailService.assertEmailDeliveryConfig,
   sendSignupOtp: emailService.sendSignupOtp,
+  sendPasswordResetOtp: emailService.sendPasswordResetOtp,
   verifyGoogleIdToken: googleAuthService.verifyGoogleIdToken,
   createOtpCode: otpService.createOtpCode,
   getOtpExpiry: otpService.getOtpExpiry,
@@ -37,12 +38,15 @@ const originals = {
     sessionRepository.findActiveSessionByRefreshToken,
   rotateSession: sessionRepository.rotateSession,
   revokeSessionByRefreshToken: sessionRepository.revokeSessionByRefreshToken,
+  revokeAllSessionsForUser: sessionRepository.revokeAllSessionsForUser,
   createRefreshToken: tokenService.createRefreshToken,
   upsertGoogleUser: userRepository.upsertGoogleUser,
+  linkGoogleAccount: userRepository.linkGoogleAccount,
   createOrUpdateEmailPasswordUser:
     userRepository.createOrUpdateEmailPasswordUser,
   findUserByEmailForAuth: userRepository.findUserByEmailForAuth,
   findUserById: userRepository.findUserById,
+  updatePasswordHash: userRepository.updatePasswordHash,
   ensureDefaultUserData: userRepository.ensureDefaultUserData,
 };
 
@@ -120,6 +124,9 @@ function installCommonStubs() {
     function assertEmailDeliveryConfig() {};
   emailService.sendSignupOtp = async function sendSignupOtp() {
     return { delivered: true, provider: 'test', messageId: 'message-1' };
+  };
+  emailService.sendPasswordResetOtp = async function sendPasswordResetOtp() {
+    return { delivered: true, provider: 'test', messageId: 'message-2' };
   };
 }
 
@@ -429,4 +436,195 @@ test('refreshTokens and logout handle invalid sessions', async function () {
 
   await authService.logout('refresh-token');
   assert.equal(revokedToken, 'refresh-token');
+});
+
+test('requestPasswordReset never reveals whether the account exists', async function () {
+  installCommonStubs();
+
+  let otpCreated = false;
+  let emailSent = false;
+
+  emailOtpRepository.createOtp = async function createOtp() {
+    otpCreated = true;
+    return { id: 'otp-id', email: 'user@example.com', expiresAt: '2026-06-01T00:10:00.000Z' };
+  };
+  emailService.sendPasswordResetOtp = async function sendPasswordResetOtp() {
+    emailSent = true;
+    return { delivered: true };
+  };
+
+  // Unknown email -> no OTP created, no email sent, still resolves the same shape
+  userRepository.findUserByEmailForAuth = async function findUserByEmailForAuth() {
+    return null;
+  };
+
+  const unknownResult = await authService.requestPasswordReset('unknown@example.com');
+
+  assert.deepEqual(unknownResult, { email: 'unknown@example.com' });
+  assert.equal(otpCreated, false);
+  assert.equal(emailSent, false);
+
+  // Known email -> OTP created and email sent, same response shape
+  userRepository.findUserByEmailForAuth = async function findUserByEmailForAuth() {
+    return user();
+  };
+
+  const knownResult = await authService.requestPasswordReset('USER@example.com');
+
+  assert.deepEqual(knownResult, { email: 'user@example.com' });
+  assert.equal(otpCreated, true);
+  assert.equal(emailSent, true);
+});
+
+test('resetPassword rejects invalid OTPs and otherwise updates the password and revokes sessions', async function () {
+  installCommonStubs();
+
+  emailOtpRepository.findActiveOtp = async function findActiveOtp() {
+    return null;
+  };
+
+  await assert.rejects(
+    authService.resetPassword({
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'brand-new-password',
+    }),
+    { code: 'INVALID_OR_EXPIRED_OTP', status: 400 }
+  );
+
+  const calls = [];
+
+  emailOtpRepository.findActiveOtp = async function findActiveOtp() {
+    return otp({
+      purpose: 'password_reset',
+      codeHash: 'user@example.com:password_reset:123456:hash',
+      metadata: {},
+    });
+  };
+  userRepository.updatePasswordHash = async function updatePasswordHash(id, passwordHash) {
+    calls.push(['update-password', id, passwordHash]);
+    return user();
+  };
+  emailOtpRepository.consumeOtp = async function consumeOtp(id) {
+    calls.push(['consume', id]);
+  };
+  sessionRepository.revokeAllSessionsForUser = async function revokeAllSessionsForUser(id) {
+    calls.push(['revoke-sessions', id]);
+  };
+
+  const result = await authService.resetPassword({
+    email: 'USER@example.com',
+    otpCode: '123456',
+    newPassword: 'brand-new-password',
+  });
+
+  assert.deepEqual(result, { email: 'user@example.com' });
+  assert.deepEqual(calls, [
+    ['update-password', userId, 'hashed-password'],
+    ['consume', otp().id],
+    ['revoke-sessions', userId],
+  ]);
+});
+
+test('linkGoogleAccount rejects when the Google token email does not match the current account', async function () {
+  installCommonStubs();
+
+  googleAuthService.verifyGoogleIdToken = async function verifyGoogleIdToken() {
+    return { googleSub: 'google-sub', email: 'other@example.com' };
+  };
+  userRepository.linkGoogleAccount = async function linkGoogleAccount() {
+    throw new Error('should not be called');
+  };
+
+  await assert.rejects(
+    authService.linkGoogleAccount(user({ email: 'user@example.com' }), 'id-token'),
+    { code: 'GOOGLE_EMAIL_MISMATCH', status: 409 }
+  );
+});
+
+test('linkGoogleAccount links a matching Google profile to the current account', async function () {
+  installCommonStubs();
+
+  const calls = [];
+
+  googleAuthService.verifyGoogleIdToken = async function verifyGoogleIdToken(idToken) {
+    calls.push(['verify', idToken]);
+    return { googleSub: 'google-sub', email: 'USER@example.com' };
+  };
+  userRepository.linkGoogleAccount = async function linkGoogleAccount(id, googleSub) {
+    calls.push(['link', id, googleSub]);
+    return user({ googleSub });
+  };
+
+  const result = await authService.linkGoogleAccount(
+    user({ email: 'user@example.com' }),
+    'id-token'
+  );
+
+  assert.equal(result.user.googleSub, 'google-sub');
+  assert.deepEqual(calls, [
+    ['verify', 'id-token'],
+    ['link', userId, 'google-sub'],
+  ]);
+});
+
+test('changePassword rejects Google-only accounts with no password set', async function () {
+  installCommonStubs();
+
+  userRepository.findUserByEmailForAuth = async function findUserByEmailForAuth() {
+    return user({ passwordHash: null });
+  };
+
+  await assert.rejects(
+    authService.changePassword(user(), {
+      currentPassword: 'anything',
+      newPassword: 'brand-new-password',
+    }),
+    { code: 'NO_PASSWORD_SET', status: 409 }
+  );
+});
+
+test('changePassword rejects an incorrect current password', async function () {
+  installCommonStubs();
+
+  userRepository.findUserByEmailForAuth = async function findUserByEmailForAuth() {
+    return user({ passwordHash: 'hashed-password' });
+  };
+
+  await assert.rejects(
+    authService.changePassword(user(), {
+      currentPassword: 'wrong-password',
+      newPassword: 'brand-new-password',
+    }),
+    { code: 'INVALID_CURRENT_PASSWORD', status: 401 }
+  );
+});
+
+test('changePassword updates the hash and revokes all sessions on success', async function () {
+  installCommonStubs();
+
+  const calls = [];
+
+  userRepository.findUserByEmailForAuth = async function findUserByEmailForAuth(email) {
+    calls.push(['find', email]);
+    return user({ passwordHash: 'hashed-password' });
+  };
+  userRepository.updatePasswordHash = async function updatePasswordHash(id, passwordHash) {
+    calls.push(['update-password', id, passwordHash]);
+    return user();
+  };
+  sessionRepository.revokeAllSessionsForUser = async function revokeAllSessionsForUser(id) {
+    calls.push(['revoke-sessions', id]);
+  };
+
+  await authService.changePassword(user({ email: 'user@example.com' }), {
+    currentPassword: 'correct-password',
+    newPassword: 'brand-new-password',
+  });
+
+  assert.deepEqual(calls, [
+    ['find', 'user@example.com'],
+    ['update-password', userId, 'hashed-password'],
+    ['revoke-sessions', userId],
+  ]);
 });

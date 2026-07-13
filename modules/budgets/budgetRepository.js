@@ -463,6 +463,7 @@ module.exports = {
   deleteBudget,
   evaluateBudgetAlertsForBudgetId,
   evaluateBudgetAlertsForTransaction,
+  getBudgetWithProgress,
   listBudgets,
   updateBudget,
 };

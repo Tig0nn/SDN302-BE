@@ -192,16 +192,31 @@ test('email-password user creation and auth lookups normalize email values', asy
 
 test('profile, settings, and default ledger helpers map nullable rows', async function () {
   installQueryHandler(async function handleQuery(sql, params) {
-    if (sql.includes('update users') && sql.includes('set display_name = coalesce')) {
+    if (sql.includes('update users') && sql.includes('set display_name = case')) {
       assert.equal(params[0], userId);
-      assert.equal(params[1], 'Updated User');
-      assert.equal(params[2], null);
-      assert.equal(params[3], 'en-US');
-      assert.equal(params[4], 'UTC');
+      // displayName provided -> flag true, value 'Updated User'
+      assert.equal(params[1], true);
+      assert.equal(params[2], 'Updated User');
+      // avatarUrl explicitly provided as null -> flag true, value null (must clear, not keep old)
+      assert.equal(params[3], true);
+      assert.equal(params[4], null);
+      // locale provided -> flag true, value 'en-US'
+      assert.equal(params[5], true);
+      assert.equal(params[6], 'en-US');
+      // timezone provided -> flag true, value 'UTC'
+      assert.equal(params[7], true);
+      assert.equal(params[8], 'UTC');
 
       return {
         rowCount: 1,
-        rows: [user({ displayName: 'Updated User', locale: 'en-US', timezone: 'UTC' })],
+        rows: [
+          user({
+            displayName: 'Updated User',
+            avatarUrl: null,
+            locale: 'en-US',
+            timezone: 'UTC',
+          }),
+        ],
       };
     }
 
@@ -273,7 +288,107 @@ test('profile, settings, and default ledger helpers map nullable rows', async fu
   const defaultLedger = await userRepository.getDefaultLedger(userId);
 
   assert.equal(profile.displayName, 'Updated User');
+  assert.equal(profile.avatarUrl, null);
   assert.equal(settings.theme, 'system');
   assert.equal(updatedSettings.dailyReminderEnabled, false);
   assert.equal(defaultLedger.id, ledgerId);
+});
+
+test('updateUserProfile leaves fields untouched when omitted from the payload', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('update users') && sql.includes('set display_name = case')) {
+      assert.equal(params[0], userId);
+      // displayName omitted -> flag false, value null (ignored by SQL, keeps old column value)
+      assert.equal(params[1], false);
+      assert.equal(params[2], null);
+      // avatarUrl omitted -> flag false
+      assert.equal(params[3], false);
+      assert.equal(params[4], null);
+      // locale provided -> flag true, value 'fr-FR'
+      assert.equal(params[5], true);
+      assert.equal(params[6], 'fr-FR');
+      // timezone omitted -> flag false
+      assert.equal(params[7], false);
+      assert.equal(params[8], null);
+
+      return {
+        rowCount: 1,
+        rows: [user({ locale: 'fr-FR' })],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const profile = await userRepository.updateUserProfile(userId, {
+    locale: 'fr-FR',
+  });
+
+  assert.equal(profile.locale, 'fr-FR');
+  assert.equal(profile.displayName, 'User Example');
+  assert.equal(profile.avatarUrl, 'https://example.com/avatar.png');
+});
+
+test('linkGoogleAccount sets google_sub when the account has none and it is free', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('select google_sub') && sql.includes('from users where id')) {
+      assert.equal(params[0], userId);
+
+      return { rowCount: 1, rows: [{ googleSub: null }] };
+    }
+
+    if (sql.includes('select id from users where google_sub')) {
+      assert.equal(params[0], 'new-google-sub');
+      assert.equal(params[1], userId);
+
+      return { rowCount: 0, rows: [] };
+    }
+
+    if (sql.includes('update users set google_sub')) {
+      assert.equal(params[0], userId);
+      assert.equal(params[1], 'new-google-sub');
+
+      return { rowCount: 1, rows: [user({ googleSub: 'new-google-sub' })] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const result = await userRepository.linkGoogleAccount(userId, 'new-google-sub');
+
+  assert.equal(result.googleSub, 'new-google-sub');
+});
+
+test('linkGoogleAccount rejects when the account already has a linked Google account', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    if (sql.includes('select google_sub') && sql.includes('from users where id')) {
+      return { rowCount: 1, rows: [{ googleSub: 'existing-sub' }] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  await assert.rejects(
+    () => userRepository.linkGoogleAccount(userId, 'new-google-sub'),
+    { code: 'GOOGLE_ALREADY_LINKED', status: 409 }
+  );
+});
+
+test('linkGoogleAccount rejects when the Google account is linked to another user', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    if (sql.includes('select google_sub') && sql.includes('from users where id')) {
+      return { rowCount: 1, rows: [{ googleSub: null }] };
+    }
+
+    if (sql.includes('select id from users where google_sub')) {
+      return { rowCount: 1, rows: [{ id: 'other-user-id' }] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  await assert.rejects(
+    () => userRepository.linkGoogleAccount(userId, 'taken-google-sub'),
+    { code: 'GOOGLE_ACCOUNT_ALREADY_LINKED', status: 409 }
+  );
 });

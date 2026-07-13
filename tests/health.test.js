@@ -9,23 +9,50 @@ const db = require('../config/db');
 const env = require('../config/env');
 const app = require('../app');
 const auditRepository = require('../modules/security/auditRepository');
+const authService = require('../modules/auth/authService');
 const metrics = require('../modules/observability/metrics');
 const rateLimit = require('../middlewares/rateLimit');
 
 const originalQuery = db.query;
 const originalRateLimitMax = env.RATE_LIMIT_MAX;
 const originalRateLimitWindowMs = env.RATE_LIMIT_WINDOW_MS;
+const originalChangePassword = authService.changePassword;
+
+function meUserRow(userId, overrides = {}) {
+  return {
+    id: userId,
+    googleSub: null,
+    email: 'user-a@example.com',
+    displayName: 'User A',
+    avatarUrl: null,
+    emailVerifiedAt: '2026-06-01T00:00:00.000Z',
+    locale: 'vi-VN',
+    timezone: 'Asia/Ho_Chi_Minh',
+    createdAt: '2026-06-01T00:00:00.000Z',
+    updatedAt: '2026-06-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function meAuthToken(userId) {
+  return jwt.sign(
+    { sub: userId, email: 'user-a@example.com' },
+    process.env.JWT_SECRET,
+    { expiresIn: 60, issuer: 'vi-vi-vu-api', audience: 'vi-vi-vu-mobile' }
+  );
+}
 
 function normalizeSql(sql) {
   return sql.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-test.afterEach(function cleanup() {
+test.afterEach(async function cleanup() {
   db.query = originalQuery;
   env.RATE_LIMIT_MAX = originalRateLimitMax;
   env.RATE_LIMIT_WINDOW_MS = originalRateLimitWindowMs;
-  metrics.resetMetrics();
-  rateLimit.resetRateLimit();
+  authService.changePassword = originalChangePassword;
+  await metrics.resetMetrics();
+  await rateLimit.resetRateLimit();
 });
 
 function request(path, options = {}) {
@@ -276,10 +303,14 @@ test('PATCH /api/v1/me updates profile and settings before returning fresh paylo
 
     if (normalized.includes('update users')) {
       assert.equal(params[0], userA);
-      assert.equal(params[1], 'Updated User');
-      assert.equal(params[2], null);
-      assert.equal(params[3], 'en-US');
-      assert.equal(params[4], 'UTC');
+      assert.equal(params[1], true);
+      assert.equal(params[2], 'Updated User');
+      assert.equal(params[3], false);
+      assert.equal(params[4], null);
+      assert.equal(params[5], true);
+      assert.equal(params[6], 'en-US');
+      assert.equal(params[7], true);
+      assert.equal(params[8], 'UTC');
 
       return {
         rowCount: 1,
@@ -352,6 +383,175 @@ test('PATCH /api/v1/me updates profile and settings before returning fresh paylo
   assert.equal(res.body.data.user.displayName, 'Updated User');
   assert.equal(res.body.data.settings.theme, 'dark');
   assert.equal(res.body.data.defaultLedger.id, ledgerId);
+});
+
+test('POST /api/v1/me/change-password delegates to authService and records an audit event', async function () {
+  const userA = '11111111-1111-4111-8111-111111111111';
+  const token = meAuthToken(userA);
+  const auditEvents = [];
+
+  db.query = async function fakeQuery(sql, params = []) {
+    const normalized = normalizeSql(sql);
+
+    if (normalized.includes('from users')) {
+      assert.equal(params[0], userA);
+      return { rowCount: 1, rows: [meUserRow(userA)] };
+    }
+
+    throw new Error(`Unexpected query: ${normalized}`);
+  };
+  auditRepository.recordAuditEvent = async function recordAuditEvent(req, eventType, metadata, userId) {
+    auditEvents.push({ eventType, metadata, userId });
+  };
+  authService.changePassword = async function changePassword(currentUser, payload) {
+    assert.equal(currentUser.id, userA);
+    assert.deepEqual(payload, {
+      currentPassword: 'old-password',
+      newPassword: 'brand-new-password',
+    });
+  };
+
+  const res = await request('/api/v1/me/change-password', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: { currentPassword: 'old-password', newPassword: 'brand-new-password' },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data, { ok: true });
+  assert.equal(auditEvents[0].eventType, 'auth.password_changed');
+  assert.equal(auditEvents[0].userId, userA);
+});
+
+test('POST /api/v1/me/change-password rejects a too-short new password before calling the service', async function () {
+  const userA = '11111111-1111-4111-8111-111111111111';
+  const token = meAuthToken(userA);
+  let called = false;
+
+  db.query = async function fakeQuery(sql, params = []) {
+    if (normalizeSql(sql).includes('from users')) {
+      assert.equal(params[0], userA);
+      return { rowCount: 1, rows: [meUserRow(userA)] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+  authService.changePassword = async function changePassword() {
+    called = true;
+  };
+
+  const res = await request('/api/v1/me/change-password', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: { currentPassword: 'old-password', newPassword: 'short' },
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+  assert.equal(called, false);
+});
+
+test('GET /api/v1/me/sessions lists only the authenticated user\'s active sessions', async function () {
+  const userA = '11111111-1111-4111-8111-111111111111';
+  const token = meAuthToken(userA);
+  const sessionId = '33333333-3333-4333-8333-333333333333';
+
+  db.query = async function fakeQuery(sql, params = []) {
+    const normalized = normalizeSql(sql);
+
+    if (normalized.includes('from users')) {
+      assert.equal(params[0], userA);
+      return { rowCount: 1, rows: [meUserRow(userA)] };
+    }
+
+    if (normalized.includes('from sessions')) {
+      assert.equal(params[0], userA);
+      return {
+        rowCount: 1,
+        rows: [{ id: sessionId, createdAt: '2026-06-01T00:00:00.000Z', expiresAt: '2026-07-01T00:00:00.000Z' }],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${normalized}`);
+  };
+
+  const res = await request('/api/v1/me/sessions', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.sessions.length, 1);
+  assert.equal(res.body.data.sessions[0].id, sessionId);
+});
+
+test('DELETE /api/v1/me/sessions/:id revokes the session and records an audit event', async function () {
+  const userA = '11111111-1111-4111-8111-111111111111';
+  const token = meAuthToken(userA);
+  const sessionId = '33333333-3333-4333-8333-333333333333';
+  const auditEvents = [];
+
+  db.query = async function fakeQuery(sql, params = []) {
+    const normalized = normalizeSql(sql);
+
+    if (normalized.includes('from users')) {
+      assert.equal(params[0], userA);
+      return { rowCount: 1, rows: [meUserRow(userA)] };
+    }
+
+    if (normalized.includes('update sessions') && normalized.includes('where id = $2')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], sessionId);
+      return { rowCount: 1, rows: [{ id: sessionId }] };
+    }
+
+    throw new Error(`Unexpected query: ${normalized}`);
+  };
+  auditRepository.recordAuditEvent = async function recordAuditEvent(req, eventType, metadata, userId) {
+    auditEvents.push({ eventType, userId });
+  };
+
+  const res = await request(`/api/v1/me/sessions/${sessionId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data, { ok: true });
+  assert.equal(auditEvents[0].eventType, 'auth.session_revoked');
+});
+
+test('POST /api/v1/me/sessions/revoke-all revokes every session and records an audit event', async function () {
+  const userA = '11111111-1111-4111-8111-111111111111';
+  const token = meAuthToken(userA);
+  const auditEvents = [];
+
+  db.query = async function fakeQuery(sql, params = []) {
+    const normalized = normalizeSql(sql);
+
+    if (normalized.includes('from users')) {
+      assert.equal(params[0], userA);
+      return { rowCount: 1, rows: [meUserRow(userA)] };
+    }
+
+    if (normalized.includes('update sessions') && normalized.includes('where user_id = $1')) {
+      assert.equal(params[0], userA);
+      return { rowCount: 2, rows: [] };
+    }
+
+    throw new Error(`Unexpected query: ${normalized}`);
+  };
+  auditRepository.recordAuditEvent = async function recordAuditEvent(req, eventType, metadata, userId) {
+    auditEvents.push({ eventType, userId });
+  };
+
+  const res = await request('/api/v1/me/sessions/revoke-all', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data, { ok: true });
+  assert.equal(auditEvents[0].eventType, 'auth.sessions_revoked_all');
 });
 
 test('POST /api/v1/auth/google validates idToken', async function () {
@@ -440,8 +640,8 @@ test('GET /openapi.json exposes documented routes', async function () {
 });
 
 test('GET /metrics returns HTTP counters and DB pool stats', async function () {
-  metrics.resetMetrics();
-  rateLimit.resetRateLimit();
+  await metrics.resetMetrics();
+  await rateLimit.resetRateLimit();
 
   await request('/health');
 
@@ -459,7 +659,7 @@ test('GET /metrics returns HTTP counters and DB pool stats', async function () {
 test('global rate limit returns a standard 429 response', async function () {
   env.RATE_LIMIT_MAX = 1;
   env.RATE_LIMIT_WINDOW_MS = 60_000;
-  rateLimit.resetRateLimit();
+  await rateLimit.resetRateLimit();
 
   const first = await request('/health');
   const second = await request('/health');

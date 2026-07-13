@@ -1,102 +1,104 @@
 const db = require('../../config/db');
 
-const MAX_LATENCY_SAMPLES = 500;
+const SNAPSHOT_WINDOW = "interval '1 hour'";
 
-const state = {
-  startedAt: new Date(),
-  requestCount: 0,
-  serverErrorCount: 0,
-  totalDurationMs: 0,
-  maxDurationMs: 0,
-  statusCounts: new Map(),
-  routeCounts: new Map(),
-  latencySamples: [],
-};
-
-function incrementMap(map, key) {
-  map.set(key, (map.get(key) || 0) + 1);
-}
+let startedAt = new Date();
 
 function routeKey(req) {
   const path = (req.originalUrl || req.path || 'unknown').split('?')[0];
 
-  return `${req.method} ${path}`;
+  return { method: req.method, route: path };
 }
 
+/**
+ * Ghi 1 dòng metrics vào Postgres (bảng request_metrics) thay vì cộng dồn
+ * trong biến RAM - giữ được số liệu qua restart và đúng khi chạy nhiều
+ * instance. Fire-and-forget: không await ở middleware gọi hàm này, nên tự
+ * nuốt lỗi ở đây để không bao giờ tạo unhandled rejection.
+ */
 function recordHttpRequest(req, res, durationMs) {
-  state.requestCount += 1;
-  state.totalDurationMs += durationMs;
-  state.maxDurationMs = Math.max(state.maxDurationMs, durationMs);
-  state.latencySamples.push(durationMs);
+  const { method, route } = routeKey(req);
 
-  if (state.latencySamples.length > MAX_LATENCY_SAMPLES) {
-    state.latencySamples.shift();
-  }
-
-  if (res.statusCode >= 500) {
-    state.serverErrorCount += 1;
-  }
-
-  incrementMap(state.statusCounts, String(res.statusCode));
-  incrementMap(state.routeCounts, routeKey(req));
-}
-
-function percentile(values, ratio) {
-  if (values.length === 0) return 0;
-
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(
-    sorted.length - 1,
-    Math.ceil(sorted.length * ratio) - 1
-  );
-
-  return sorted[index];
+  return db
+    .query(
+      `
+        insert into request_metrics (method, route, status_code, duration_ms)
+        values ($1, $2, $3, $4)
+      `,
+      [method, route, res.statusCode, durationMs]
+    )
+    .catch((err) => {
+      console.error({ event: 'metrics_write_failed', error: err.message });
+    });
 }
 
 function roundMs(value) {
-  return Math.round(value * 100) / 100;
+  return Math.round(Number(value || 0) * 100) / 100;
 }
 
-function mapToObject(map) {
-  return Object.fromEntries([...map.entries()].sort());
-}
+async function getHttpMetrics() {
+  const [summaryResult, statusResult, routeResult] = await Promise.all([
+    db.query(`
+      select
+        count(*)::int as "requestCount",
+        count(*) filter (where status_code >= 500)::int as "serverErrorCount",
+        coalesce(avg(duration_ms), 0) as "averageDurationMs",
+        coalesce(max(duration_ms), 0) as "maxDurationMs",
+        coalesce(percentile_cont(0.95) within group (order by duration_ms), 0) as "p95DurationMs"
+      from request_metrics
+      where created_at > now() - ${SNAPSHOT_WINDOW}
+    `),
+    db.query(`
+      select status_code::text as status, count(*)::int as count
+      from request_metrics
+      where created_at > now() - ${SNAPSHOT_WINDOW}
+      group by status_code
+      order by status_code
+    `),
+    db.query(`
+      select method || ' ' || route as route, count(*)::int as count
+      from request_metrics
+      where created_at > now() - ${SNAPSHOT_WINDOW}
+      group by method, route
+      order by method || ' ' || route
+    `),
+  ]);
 
-function getHttpMetrics() {
-  const average =
-    state.requestCount === 0 ? 0 : state.totalDurationMs / state.requestCount;
+  const summary = summaryResult.rows[0] || {
+    requestCount: 0,
+    serverErrorCount: 0,
+    averageDurationMs: 0,
+    maxDurationMs: 0,
+    p95DurationMs: 0,
+  };
 
   return {
-    startedAt: state.startedAt.toISOString(),
-    requestCount: state.requestCount,
-    serverErrorCount: state.serverErrorCount,
+    startedAt: startedAt.toISOString(),
+    windowSeconds: 3600,
+    requestCount: summary.requestCount,
+    serverErrorCount: summary.serverErrorCount,
     errorRate:
-      state.requestCount === 0 ? 0 : state.serverErrorCount / state.requestCount,
+      summary.requestCount === 0 ? 0 : summary.serverErrorCount / summary.requestCount,
     latencyMs: {
-      average: roundMs(average),
-      max: roundMs(state.maxDurationMs),
-      p95: roundMs(percentile(state.latencySamples, 0.95)),
+      average: roundMs(summary.averageDurationMs),
+      max: roundMs(summary.maxDurationMs),
+      p95: roundMs(summary.p95DurationMs),
     },
-    statusCounts: mapToObject(state.statusCounts),
-    routeCounts: mapToObject(state.routeCounts),
+    statusCounts: Object.fromEntries(statusResult.rows.map((row) => [row.status, row.count])),
+    routeCounts: Object.fromEntries(routeResult.rows.map((row) => [row.route, row.count])),
   };
 }
 
-function getMetricsSnapshot() {
+async function getMetricsSnapshot() {
   return {
-    http: getHttpMetrics(),
+    http: await getHttpMetrics(),
     db: db.getPoolStats(),
   };
 }
 
-function resetMetrics() {
-  state.startedAt = new Date();
-  state.requestCount = 0;
-  state.serverErrorCount = 0;
-  state.totalDurationMs = 0;
-  state.maxDurationMs = 0;
-  state.statusCounts.clear();
-  state.routeCounts.clear();
-  state.latencySamples = [];
+async function resetMetrics() {
+  startedAt = new Date();
+  await db.query('truncate table request_metrics');
 }
 
 module.exports = {

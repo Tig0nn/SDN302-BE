@@ -35,7 +35,14 @@ function recordAuditEvent(req, eventType, metadata = {}, userId) {
     ipAddress: req.ip,
     userAgent: req.get('user-agent') || null,
     metadata,
-  }).catch(() => {});
+  }).catch((err) => {
+    console.error({
+      event: 'audit_write_failed',
+      eventType,
+      requestId: req.requestId,
+      error: err.message,
+    });
+  });
 }
 
 module.exports = {

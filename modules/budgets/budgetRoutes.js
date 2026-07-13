@@ -62,6 +62,24 @@ router.get(
   }
 );
 
+router.get(
+  '/:id',
+  requireAuth,
+  validate({ params: budgetParamsSchema }),
+  async function getBudget(req, res, next) {
+    try {
+      const budget = await budgetRepository.getBudgetWithProgress(
+        req.user.id,
+        req.params.id
+      );
+
+      sendOk(req, res, { budget });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.post(
   '/',
   requireAuth,

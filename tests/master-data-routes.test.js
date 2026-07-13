@@ -778,3 +778,165 @@ test('GET /api/v1/payment-accounts lists accounts through authenticated user sco
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.paymentAccounts[0].type, 'cash');
 });
+
+test('POST /api/v1/payment-accounts rejects a name reserved for a system account', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/payment-accounts', {
+    method: 'POST',
+    body: { name: 'Vietcombank', type: 'traditional_bank' },
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error.code, 'RESERVED_PAYMENT_ACCOUNT_NAME');
+});
+
+test('POST /api/v1/payment-accounts creates a custom account', async function () {
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('select id') && sql.includes('from payment_accounts')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'Quỹ riêng');
+
+      return { rowCount: 0, rows: [] };
+    }
+
+    if (sql.includes('insert into payment_accounts')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], 'Quỹ riêng');
+      assert.equal(params[2], 'QR');
+      assert.equal(params[3], 'cash');
+      assert.equal(params[4], '#000000');
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: '77777777-7777-4777-8777-777777777777',
+            userId: userA,
+            name: 'Quỹ riêng',
+            shortName: 'QR',
+            type: 'cash',
+            color: '#000000',
+            isSystem: false,
+            sortOrder: 3,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request('/api/v1/payment-accounts', {
+    method: 'POST',
+    body: { name: 'Quỹ riêng', shortName: 'QR', type: 'cash', color: '#000000' },
+  });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.data.paymentAccount.name, 'Quỹ riêng');
+  assert.equal(res.body.data.paymentAccount.isSystem, false);
+});
+
+test('PATCH /api/v1/payment-accounts/:id rejects system account updates', async function () {
+  const accountId = '66666666-6666-4666-8666-666666666666';
+
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from payment_accounts') && sql.includes('limit 1')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], accountId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: accountId,
+            userId: userA,
+            name: 'Tiền mặt',
+            shortName: 'Cash',
+            type: 'cash',
+            color: '#64748B',
+            isSystem: true,
+            sortOrder: 0,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/payment-accounts/${accountId}`, {
+    method: 'PATCH',
+    body: { name: 'Updated' },
+  });
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.error.code, 'SYSTEM_PAYMENT_ACCOUNT_READ_ONLY');
+});
+
+test('DELETE /api/v1/payment-accounts/:id soft deletes a custom account', async function () {
+  const accountId = '77777777-7777-4777-8777-777777777777';
+
+  installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from payment_accounts') && sql.includes('limit 1')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], accountId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: accountId,
+            userId: userA,
+            name: 'Quỹ riêng',
+            shortName: 'QR',
+            type: 'cash',
+            color: '#000000',
+            isSystem: false,
+            sortOrder: 3,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-01T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    if (sql.includes('update payment_accounts') && sql.includes('set deleted_at = now()')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], accountId);
+
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: accountId,
+            userId: userA,
+            name: 'Quỹ riêng',
+            shortName: 'QR',
+            type: 'cash',
+            color: '#000000',
+            isSystem: false,
+            sortOrder: 3,
+            createdAt: '2026-06-01T00:00:00.000Z',
+            updatedAt: '2026-06-02T00:00:00.000Z',
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/payment-accounts/${accountId}`, {
+    method: 'DELETE',
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.paymentAccount.id, accountId);
+});

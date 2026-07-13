@@ -1,10 +1,12 @@
 const http = require('http');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-with-enough-length';
 
 const app = require('../app');
+const db = require('../config/db');
 const authService = require('../modules/auth/authService');
 const auditRepository = require('../modules/security/auditRepository');
 
@@ -13,11 +15,15 @@ const originalAuthService = {
   verifySignupOtp: authService.verifySignupOtp,
   loginWithEmail: authService.loginWithEmail,
   resendSignupOtp: authService.resendSignupOtp,
+  requestPasswordReset: authService.requestPasswordReset,
+  resetPassword: authService.resetPassword,
   loginWithGoogle: authService.loginWithGoogle,
+  linkGoogleAccount: authService.linkGoogleAccount,
   refreshTokens: authService.refreshTokens,
   logout: authService.logout,
 };
 const originalRecordAuditEvent = auditRepository.recordAuditEvent;
+const originalQuery = db.query;
 
 function user(overrides = {}) {
   return {
@@ -106,6 +112,15 @@ function request(path, options = {}) {
 function restoreAll() {
   Object.assign(authService, originalAuthService);
   auditRepository.recordAuditEvent = originalRecordAuditEvent;
+  db.query = originalQuery;
+}
+
+function authToken(user) {
+  return jwt.sign(
+    { sub: user.id, email: user.email },
+    process.env.JWT_SECRET,
+    { expiresIn: 60, issuer: 'vi-vi-vu-api', audience: 'vi-vi-vu-mobile' }
+  );
 }
 
 test.afterEach(restoreAll);
@@ -290,5 +305,149 @@ test('POST /api/v1/auth/email/verify validates OTP format before calling service
 
   assert.equal(res.statusCode, 400);
   assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+});
+
+test('POST /api/v1/auth/email/forgot-password never leaks whether the account exists', async function () {
+  const auditEvents = [];
+
+  auditRepository.recordAuditEvent = async function recordAuditEvent(req, eventType, metadata) {
+    auditEvents.push({ eventType, metadata });
+  };
+  authService.requestPasswordReset = async function requestPasswordReset(email) {
+    assert.equal(email, 'unknown@example.com');
+
+    return { email: 'unknown@example.com' };
+  };
+
+  const res = await request('/api/v1/auth/email/forgot-password', {
+    method: 'POST',
+    body: { email: 'unknown@example.com' },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data, { ok: true });
+  assert.equal(auditEvents[0].eventType, 'auth.password_reset_requested');
+});
+
+test('POST /api/v1/auth/email/reset-password sets a new password and revokes existing sessions', async function () {
+  const auditEvents = [];
+
+  auditRepository.recordAuditEvent = async function recordAuditEvent(req, eventType, metadata) {
+    auditEvents.push({ eventType, metadata });
+  };
+  authService.resetPassword = async function resetPassword(payload) {
+    assert.deepEqual(payload, {
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'newpassword123',
+    });
+
+    return { email: 'user@example.com' };
+  };
+
+  const res = await request('/api/v1/auth/email/reset-password', {
+    method: 'POST',
+    body: {
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'newpassword123',
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data, { ok: true });
+  assert.equal(auditEvents[0].eventType, 'auth.password_reset_completed');
+});
+
+test('POST /api/v1/auth/email/reset-password rejects a too-short new password before calling service', async function () {
+  let called = false;
+
+  authService.resetPassword = async function resetPassword() {
+    called = true;
+  };
+
+  const res = await request('/api/v1/auth/email/reset-password', {
+    method: 'POST',
+    body: {
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'short',
+    },
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error.code, 'VALIDATION_ERROR');
   assert.equal(called, false);
+  assert.equal(called, false);
+});
+
+test('POST /api/v1/auth/google/link requires authentication', async function () {
+  const res = await request('/api/v1/auth/google/link', {
+    method: 'POST',
+    body: { idToken: 'google-id-token' },
+  });
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.error.code, 'AUTH_REQUIRED');
+});
+
+test('POST /api/v1/auth/google/link links Google to the authenticated account', async function () {
+  const currentUser = user();
+  const auditEvents = [];
+
+  db.query = async function fakeQuery(sql) {
+    if (sql.toLowerCase().includes('from users')) {
+      return { rowCount: 1, rows: [currentUser] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+  auditRepository.recordAuditEvent = async function recordAuditEvent(req, eventType, metadata, userId) {
+    auditEvents.push({ eventType, metadata, userId });
+  };
+  authService.linkGoogleAccount = async function linkGoogleAccount(passedUser, idToken) {
+    assert.equal(passedUser.id, currentUser.id);
+    assert.equal(idToken, 'google-id-token');
+
+    return { user: { ...currentUser, googleSub: 'google-sub-123' } };
+  };
+
+  const res = await request('/api/v1/auth/google/link', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${authToken(currentUser)}` },
+    body: { idToken: 'google-id-token' },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.user.googleSub, 'google-sub-123');
+  assert.equal(auditEvents[0].eventType, 'auth.google_linked');
+  assert.equal(auditEvents[0].userId, currentUser.id);
+});
+
+test('POST /api/v1/auth/google/link rejects an email mismatch', async function () {
+  const currentUser = user();
+
+  db.query = async function fakeQuery(sql) {
+    if (sql.toLowerCase().includes('from users')) {
+      return { rowCount: 1, rows: [currentUser] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+  authService.linkGoogleAccount = async function linkGoogleAccount() {
+    const err = new Error('Google account email does not match the current account email');
+
+    err.code = 'GOOGLE_EMAIL_MISMATCH';
+    err.status = 409;
+    throw err;
+  };
+
+  const res = await request('/api/v1/auth/google/link', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${authToken(currentUser)}` },
+    body: { idToken: 'google-id-token' },
+  });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error.code, 'GOOGLE_EMAIL_MISMATCH');
 });

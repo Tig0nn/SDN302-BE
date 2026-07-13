@@ -125,6 +125,66 @@ async function createOrUpdateEmailPasswordUser({ email, passwordHash, displayNam
   return result.rows[0];
 }
 
+/** Đặt lại mật khẩu cho user đã tồn tại (dùng cho flow quên mật khẩu). */
+async function updatePasswordHash(userId, passwordHash) {
+  const result = await db.query(
+    `
+      update users
+      set password_hash = $2,
+          password_updated_at = now()
+      where id = $1
+      returning ${USER_FIELDS}
+    `,
+    [userId, passwordHash]
+  );
+
+  return result.rows[0] || null;
+}
+
+function googleAlreadyLinkedError() {
+  const err = new Error('This account is already linked to a Google account');
+
+  err.code = 'GOOGLE_ALREADY_LINKED';
+  err.status = 409;
+  return err;
+}
+
+function googleAccountTakenError() {
+  const err = new Error('This Google account is already linked to another user');
+
+  err.code = 'GOOGLE_ACCOUNT_ALREADY_LINKED';
+  err.status = 409;
+  return err;
+}
+
+/** Liên kết Google vào tài khoản email/password đang đăng nhập. */
+async function linkGoogleAccount(userId, googleSub) {
+  const current = await db.query(
+    `select google_sub as "googleSub" from users where id = $1 limit 1`,
+    [userId]
+  );
+
+  if (current.rows[0]?.googleSub) {
+    throw googleAlreadyLinkedError();
+  }
+
+  const conflict = await db.query(
+    `select id from users where google_sub = $1 and id <> $2 limit 1`,
+    [googleSub, userId]
+  );
+
+  if (conflict.rowCount > 0) {
+    throw googleAccountTakenError();
+  }
+
+  const result = await db.query(
+    `update users set google_sub = $2 where id = $1 returning ${USER_FIELDS}`,
+    [userId, googleSub]
+  );
+
+  return result.rows[0];
+}
+
 async function findUserById(userId) {
   const result = await db.query(
     `
@@ -155,23 +215,31 @@ async function findUserByEmailForAuth(email) {
   return result.rows[0] || null;
 }
 
+function hasField(updates, key) {
+  return Object.prototype.hasOwnProperty.call(updates, key);
+}
+
 async function updateUserProfile(userId, updates) {
   const result = await db.query(
     `
       update users
-      set display_name = coalesce($2, display_name),
-          avatar_url = coalesce($3, avatar_url),
-          locale = coalesce($4, locale),
-          timezone = coalesce($5, timezone)
+      set display_name = case when $2 then $3 else display_name end,
+          avatar_url = case when $4 then $5 else avatar_url end,
+          locale = case when $6 then $7 else locale end,
+          timezone = case when $8 then $9 else timezone end
       where id = $1
       returning ${USER_FIELDS}
     `,
     [
       userId,
-      updates.displayName || null,
-      updates.avatarUrl || null,
-      updates.locale || null,
-      updates.timezone || null,
+      hasField(updates, 'displayName'),
+      updates.displayName ?? null,
+      hasField(updates, 'avatarUrl'),
+      updates.avatarUrl ?? null,
+      hasField(updates, 'locale'),
+      updates.locale ?? null,
+      hasField(updates, 'timezone'),
+      updates.timezone ?? null,
     ]
   );
 
@@ -454,9 +522,11 @@ async function getDefaultLedger(userId) {
 
 module.exports = {
   upsertGoogleUser,
+  linkGoogleAccount,
   createOrUpdateEmailPasswordUser,
   findUserById,
   findUserByEmailForAuth,
+  updatePasswordHash,
   updateUserProfile,
   ensureDefaultUserData,
   getUserSettings,

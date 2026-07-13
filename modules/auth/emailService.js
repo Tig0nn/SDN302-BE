@@ -86,6 +86,29 @@ function buildOtpEmail(code) {
   };
 }
 
+function buildPasswordResetOtpEmail(code) {
+  return {
+    subject: 'Ma dat lai mat khau Vi Vi Vu',
+    text: [
+      'Xin chao,',
+      '',
+      `Ma dat lai mat khau Vi Vi Vu cua ban la: ${code}`,
+      `Ma nay se het han sau ${env.OTP_TTL_MINUTES} phut.`,
+      '',
+      'Neu ban khong yeu cau dat lai mat khau, hay bo qua email nay.',
+    ].join('\n'),
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+        <h2>Dat lai mat khau Vi Vi Vu</h2>
+        <p>Ma xac thuc cua ban la:</p>
+        <p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p>
+        <p>Ma nay se het han sau ${env.OTP_TTL_MINUTES} phut.</p>
+        <p>Neu ban khong yeu cau dat lai mat khau, hay bo qua email nay.</p>
+      </div>
+    `,
+  };
+}
+
 function parseBrevoSender(from) {
   const match = from.match(/^\s*(?:"?([^"<]+)"?\s*)?<([^<>@\s]+@[^<>\s]+)>\s*$/);
 
@@ -201,7 +224,34 @@ async function sendSignupOtp(email, code) {
   return { delivered: false };
 }
 
+async function sendPasswordResetOtp(email, code) {
+  assertEmailDeliveryConfig();
+  const content = buildPasswordResetOtpEmail(code);
+  const provider = getEmailProvider();
+
+  if (provider === 'brevo' && hasBrevoConfig()) {
+    return sendWithBrevo(email, content);
+  }
+
+  if (provider === 'smtp' && hasSmtpConfig()) {
+    return sendWithSmtp(email, content);
+  }
+
+  if (env.NODE_ENV !== 'production') {
+    console.info({
+      email,
+      code,
+      message: 'Email delivery is not configured; OTP logged for local development only.',
+    });
+
+    return { delivered: false };
+  }
+
+  return { delivered: false };
+}
+
 module.exports = {
   assertEmailDeliveryConfig,
+  sendPasswordResetOtp,
   sendSignupOtp,
 };

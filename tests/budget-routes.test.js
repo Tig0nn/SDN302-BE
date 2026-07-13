@@ -181,6 +181,42 @@ test('GET /api/v1/budgets lists budget progress and exceeded status', async func
   assert.ok(queries.every((query) => !query.params.includes(userB)));
 });
 
+test('GET /api/v1/budgets/:id returns a single budget with progress', async function () {
+  const queries = installQueryHandler(async function handleQuery(sql, params) {
+    if (sql.includes('from budgets b') && sql.includes('left join lateral')) {
+      assert.equal(params[0], userA);
+      assert.equal(params[1], budgetId);
+
+      return { rowCount: 1, rows: [budgetRow()] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/budgets/${budgetId}?userId=${userB}`);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.budget.id, budgetId);
+  assert.equal(res.body.data.budget.spentAmountVnd, 120000);
+  assert.equal(res.body.data.budget.status, 'exceeded');
+  assert.ok(queries.every((query) => !query.params.includes(userB)));
+});
+
+test('GET /api/v1/budgets/:id returns 404 for a budget outside the authenticated user scope', async function () {
+  installQueryHandler(async function handleQuery(sql) {
+    if (sql.includes('from budgets b') && sql.includes('left join lateral')) {
+      return { rowCount: 0, rows: [] };
+    }
+
+    throw new Error(`Unexpected query: ${sql}`);
+  });
+
+  const res = await request(`/api/v1/budgets/${budgetId}`);
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error.code, 'BUDGET_NOT_FOUND');
+});
+
 test('POST /api/v1/budgets creates a budget and evaluates current alerts', async function () {
   const queries = installQueryHandler(async function handleQuery(sql, params) {
     if (sql.includes('from categories')) {
