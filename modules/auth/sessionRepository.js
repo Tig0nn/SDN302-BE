@@ -54,6 +54,18 @@ async function revokeSessionByRefreshToken(refreshToken) {
   );
 }
 
+async function revokeAllSessionsForUser(userId) {
+  await db.query(
+    `
+      update sessions
+      set revoked_at = now()
+      where user_id = $1
+        and revoked_at is null
+    `,
+    [userId]
+  );
+}
+
 async function rotateSession(sessionId, refreshToken) {
   const tokenHash = hashRefreshToken(refreshToken);
   const expiresAt = getRefreshTokenExpiry();
@@ -77,5 +89,6 @@ module.exports = {
   createSession,
   findActiveSessionByRefreshToken,
   revokeSessionByRefreshToken,
+  revokeAllSessionsForUser,
   rotateSession,
 };

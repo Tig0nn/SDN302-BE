@@ -13,6 +13,8 @@ const originalAuthService = {
   verifySignupOtp: authService.verifySignupOtp,
   loginWithEmail: authService.loginWithEmail,
   resendSignupOtp: authService.resendSignupOtp,
+  forgotPassword: authService.forgotPassword,
+  resetPassword: authService.resetPassword,
   loginWithGoogle: authService.loginWithGoogle,
   refreshTokens: authService.refreshTokens,
   logout: authService.logout,
@@ -166,6 +168,30 @@ test('auth email and token routes delegate to services and record audit events',
       delivered: false,
     };
   };
+  authService.forgotPassword = async function forgotPassword(payload) {
+    assert.deepEqual(payload, {
+      email: 'user@example.com',
+    });
+
+    return {
+      email: 'user@example.com',
+      otpExpiresAt: '2026-06-01T00:10:00.000Z',
+      otpTtlMinutes: 10,
+      delivered: true,
+    };
+  };
+  authService.resetPassword = async function resetPassword(payload) {
+    assert.deepEqual(payload, {
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'new-password123',
+    });
+
+    return {
+      ok: true,
+      email: 'user@example.com',
+    };
+  };
   authService.refreshTokens = async function refreshTokens(refreshToken) {
     assert.equal(refreshToken, 'old-refresh-token');
 
@@ -206,6 +232,20 @@ test('auth email and token routes delegate to services and record audit events',
       email: 'new@example.com',
     },
   });
+  const forgot = await request('/api/v1/auth/email/forgot-password', {
+    method: 'POST',
+    body: {
+      email: 'user@example.com',
+    },
+  });
+  const reset = await request('/api/v1/auth/email/reset-password', {
+    method: 'POST',
+    body: {
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'new-password123',
+    },
+  });
   const refresh = await request('/api/v1/auth/refresh', {
     method: 'POST',
     body: {
@@ -227,6 +267,13 @@ test('auth email and token routes delegate to services and record audit events',
   assert.equal(login.body.data.tokens.accessToken, 'access-token');
   assert.equal(resend.statusCode, 200);
   assert.equal(resend.body.data.delivered, false);
+  assert.equal(forgot.statusCode, 200);
+  assert.equal(forgot.body.data.delivered, true);
+  assert.equal(reset.statusCode, 200);
+  assert.deepEqual(reset.body.data, {
+    ok: true,
+    email: 'user@example.com',
+  });
   assert.equal(refresh.statusCode, 200);
   assert.equal(refresh.body.data.tokens.refreshToken, 'refresh-token');
   assert.equal(logout.statusCode, 200);
@@ -238,6 +285,8 @@ test('auth email and token routes delegate to services and record audit events',
       'auth.email_signup_verified',
       'auth.email_login',
       'auth.email_otp_resent',
+      'auth.password_reset_requested',
+      'auth.password_reset_completed',
       'auth.refresh',
       'auth.logout',
     ]
@@ -285,6 +334,27 @@ test('POST /api/v1/auth/email/verify validates OTP format before calling service
     body: {
       email: 'new@example.com',
       otpCode: 'abc123',
+    },
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+  assert.equal(called, false);
+});
+
+test('POST /api/v1/auth/email/reset-password validates password length', async function () {
+  let called = false;
+
+  authService.resetPassword = async function resetPassword() {
+    called = true;
+  };
+
+  const res = await request('/api/v1/auth/email/reset-password', {
+    method: 'POST',
+    body: {
+      email: 'user@example.com',
+      otpCode: '123456',
+      newPassword: 'short',
     },
   });
 

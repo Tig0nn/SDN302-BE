@@ -24,6 +24,7 @@ const originals = {
   consumeOtp: emailOtpRepository.consumeOtp,
   assertEmailDeliveryConfig: emailService.assertEmailDeliveryConfig,
   sendSignupOtp: emailService.sendSignupOtp,
+  sendPasswordResetOtp: emailService.sendPasswordResetOtp,
   verifyGoogleIdToken: googleAuthService.verifyGoogleIdToken,
   createOtpCode: otpService.createOtpCode,
   getOtpExpiry: otpService.getOtpExpiry,
@@ -37,12 +38,14 @@ const originals = {
     sessionRepository.findActiveSessionByRefreshToken,
   rotateSession: sessionRepository.rotateSession,
   revokeSessionByRefreshToken: sessionRepository.revokeSessionByRefreshToken,
+  revokeAllSessionsForUser: sessionRepository.revokeAllSessionsForUser,
   createRefreshToken: tokenService.createRefreshToken,
   upsertGoogleUser: userRepository.upsertGoogleUser,
   createOrUpdateEmailPasswordUser:
     userRepository.createOrUpdateEmailPasswordUser,
   findUserByEmailForAuth: userRepository.findUserByEmailForAuth,
   findUserById: userRepository.findUserById,
+  updatePasswordHash: userRepository.updatePasswordHash,
   ensureDefaultUserData: userRepository.ensureDefaultUserData,
 };
 
@@ -120,6 +123,9 @@ function installCommonStubs() {
     function assertEmailDeliveryConfig() {};
   emailService.sendSignupOtp = async function sendSignupOtp() {
     return { delivered: true, provider: 'test', messageId: 'message-1' };
+  };
+  emailService.sendPasswordResetOtp = async function sendPasswordResetOtp() {
+    return { delivered: true, provider: 'test', messageId: 'message-2' };
   };
 }
 
@@ -429,4 +435,158 @@ test('refreshTokens and logout handle invalid sessions', async function () {
 
   await authService.logout('refresh-token');
   assert.equal(revokedToken, 'refresh-token');
+});
+
+test('forgotPassword returns a generic response when account is not resettable', async function () {
+  installCommonStubs();
+
+  let created = false;
+
+  userRepository.findUserByEmailForAuth =
+    async function findUserByEmailForAuth() {
+      return null;
+    };
+  emailOtpRepository.createOtp = async function createOtp() {
+    created = true;
+  };
+
+  const result = await authService.forgotPassword({
+    email: 'missing@example.com',
+  });
+
+  assert.equal(result.email, 'missing@example.com');
+  assert.equal(result.delivered, false);
+  assert.equal(result.otpTtlMinutes, 10);
+  assert.equal(created, false);
+});
+
+test('forgotPassword creates password_reset OTP for verified password accounts', async function () {
+  installCommonStubs();
+
+  let createdOtp;
+  let emailed;
+
+  userRepository.findUserByEmailForAuth =
+    async function findUserByEmailForAuth() {
+      return user();
+    };
+  emailOtpRepository.createOtp = async function createOtp(payload) {
+    createdOtp = payload;
+    return {
+      id: 'otp-id',
+      email: payload.email,
+      purpose: payload.purpose,
+      expiresAt: payload.expiresAt,
+      createdAt: '2026-06-01T00:00:00.000Z',
+    };
+  };
+  emailService.sendPasswordResetOtp = async function sendPasswordResetOtp(
+    email,
+    code
+  ) {
+    emailed = { email, code };
+    return { delivered: true, provider: 'test', messageId: 'reset-1' };
+  };
+
+  const result = await authService.forgotPassword({
+    email: 'USER@example.com',
+  });
+
+  assert.equal(result.email, 'user@example.com');
+  assert.equal(result.delivered, true);
+  assert.equal(createdOtp.purpose, 'password_reset');
+  assert.equal(
+    createdOtp.codeHash,
+    'user@example.com:password_reset:123456:hash'
+  );
+  assert.equal(createdOtp.userId, userId);
+  assert.deepEqual(emailed, {
+    email: 'user@example.com',
+    code: '123456',
+  });
+});
+
+test('resetPassword updates password, consumes OTP, and revokes sessions', async function () {
+  installCommonStubs();
+
+  const calls = [];
+
+  emailOtpRepository.findActiveOtp = async function findActiveOtp(
+    email,
+    purpose
+  ) {
+    assert.equal(email, 'user@example.com');
+    assert.equal(purpose, 'password_reset');
+    return otp({
+      purpose: 'password_reset',
+      codeHash: 'user@example.com:password_reset:123456:hash',
+      metadata: {},
+    });
+  };
+  userRepository.findUserByEmailForAuth =
+    async function findUserByEmailForAuth() {
+      return user();
+    };
+  passwordService.hashPassword = async function hashPassword(password) {
+    calls.push(['hash', password]);
+    return 'new-hashed-password';
+  };
+  userRepository.updatePasswordHash = async function updatePasswordHash(
+    id,
+    passwordHash
+  ) {
+    calls.push(['update', id, passwordHash]);
+    return user();
+  };
+  emailOtpRepository.consumeOtp = async function consumeOtp(id) {
+    calls.push(['consume', id]);
+  };
+  sessionRepository.revokeAllSessionsForUser =
+    async function revokeAllSessionsForUser(id) {
+      calls.push(['revoke-all', id]);
+    };
+
+  const result = await authService.resetPassword({
+    email: 'USER@example.com',
+    otpCode: '123456',
+    newPassword: 'brand-new-password',
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    email: 'user@example.com',
+  });
+  assert.deepEqual(calls, [
+    ['hash', 'brand-new-password'],
+    ['update', userId, 'new-hashed-password'],
+    ['consume', otp().id],
+    ['revoke-all', userId],
+  ]);
+});
+
+test('resetPassword rejects invalid OTP codes', async function () {
+  installCommonStubs();
+
+  let incrementedOtpId;
+
+  emailOtpRepository.findActiveOtp = async function findActiveOtp() {
+    return otp({
+      purpose: 'password_reset',
+      codeHash: 'user@example.com:password_reset:123456:hash',
+      metadata: {},
+    });
+  };
+  emailOtpRepository.incrementAttempts = async function incrementAttempts(id) {
+    incrementedOtpId = id;
+  };
+
+  await assert.rejects(
+    authService.resetPassword({
+      email: 'user@example.com',
+      otpCode: '000000',
+      newPassword: 'brand-new-password',
+    }),
+    { code: 'INVALID_OR_EXPIRED_OTP', status: 400 }
+  );
+  assert.equal(incrementedOtpId, otp().id);
 });

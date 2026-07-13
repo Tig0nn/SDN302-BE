@@ -225,6 +225,110 @@ async function loginWithEmail({ email, password }) {
   return buildTokenResponse(user, session, refreshToken);
 }
 
+function buildForgotPasswordResponse(email, overrides = {}) {
+  return {
+    email,
+    otpExpiresAt: overrides.otpExpiresAt || otpService.getOtpExpiry(),
+    otpTtlMinutes: env.OTP_TTL_MINUTES,
+    delivered: Boolean(overrides.delivered),
+  };
+}
+
+async function forgotPassword({ email }) {
+  const normalizedEmail = otpService.normalizeEmail(email);
+
+  emailService.assertEmailDeliveryConfig();
+
+  const user = await userRepository.findUserByEmailForAuth(normalizedEmail);
+
+  if (!user?.passwordHash || !user.emailVerifiedAt) {
+    return buildForgotPasswordResponse(normalizedEmail);
+  }
+
+  const code = otpService.createOtpCode();
+  const expiresAt = otpService.getOtpExpiry();
+  const otp = await emailOtpRepository.createOtp({
+    email: normalizedEmail,
+    purpose: 'password_reset',
+    codeHash: otpService.hashOtpCode(normalizedEmail, 'password_reset', code),
+    expiresAt,
+    userId: user.id,
+    metadata: {},
+  });
+  const delivery = await emailService.sendPasswordResetOtp(normalizedEmail, code);
+
+  return buildForgotPasswordResponse(normalizedEmail, {
+    otpExpiresAt: otp.expiresAt,
+    delivered: delivery.delivered,
+  });
+}
+
+async function resetPassword({ email, otpCode, newPassword }) {
+  const normalizedEmail = otpService.normalizeEmail(email);
+  const otp = await emailOtpRepository.findActiveOtp(
+    normalizedEmail,
+    'password_reset'
+  );
+
+  if (!otp) {
+    const err = new Error('OTP is invalid or expired');
+
+    err.code = 'INVALID_OR_EXPIRED_OTP';
+    err.status = 400;
+    throw err;
+  }
+
+  if (otp.attempts >= otp.maxAttempts) {
+    await emailOtpRepository.consumeOtp(otp.id);
+
+    const err = new Error('OTP attempt limit exceeded');
+
+    err.code = 'OTP_ATTEMPT_LIMIT_EXCEEDED';
+    err.status = 429;
+    throw err;
+  }
+
+  const isValid = otpService.verifyOtpCode(
+    normalizedEmail,
+    'password_reset',
+    otpCode,
+    otp.codeHash
+  );
+
+  if (!isValid) {
+    await emailOtpRepository.incrementAttempts(otp.id);
+
+    const err = new Error('OTP is invalid or expired');
+
+    err.code = 'INVALID_OR_EXPIRED_OTP';
+    err.status = 400;
+    throw err;
+  }
+
+  const user = await userRepository.findUserByEmailForAuth(normalizedEmail);
+
+  if (!user?.passwordHash || !user.emailVerifiedAt) {
+    await emailOtpRepository.consumeOtp(otp.id);
+
+    const err = new Error('Password reset is not available for this account');
+
+    err.code = 'PASSWORD_RESET_UNAVAILABLE';
+    err.status = 400;
+    throw err;
+  }
+
+  const passwordHash = await passwordService.hashPassword(newPassword);
+
+  await userRepository.updatePasswordHash(user.id, passwordHash);
+  await emailOtpRepository.consumeOtp(otp.id);
+  await sessionRepository.revokeAllSessionsForUser(user.id);
+
+  return {
+    ok: true,
+    email: normalizedEmail,
+  };
+}
+
 async function refreshTokens(refreshToken) {
   const session = await sessionRepository.findActiveSessionByRefreshToken(refreshToken);
 
@@ -267,6 +371,8 @@ module.exports = {
   registerWithEmail,
   resendSignupOtp,
   verifySignupOtp,
+  forgotPassword,
+  resetPassword,
   refreshTokens,
   logout,
 };

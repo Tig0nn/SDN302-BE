@@ -86,6 +86,29 @@ function buildOtpEmail(code) {
   };
 }
 
+function buildPasswordResetOtpEmail(code) {
+  return {
+    subject: 'Dat lai mat khau Vi Vi Vu',
+    text: [
+      'Xin chao,',
+      '',
+      `Ma dat lai mat khau Vi Vi Vu cua ban la: ${code}`,
+      `Ma nay se het han sau ${env.OTP_TTL_MINUTES} phut.`,
+      '',
+      'Neu ban khong yeu cau dat lai mat khau, hay bo qua email nay.',
+    ].join('\n'),
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+        <h2>Dat lai mat khau Vi Vi Vu</h2>
+        <p>Ma dat lai mat khau cua ban la:</p>
+        <p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p>
+        <p>Ma nay se het han sau ${env.OTP_TTL_MINUTES} phut.</p>
+        <p>Neu ban khong yeu cau dat lai mat khau, hay bo qua email nay.</p>
+      </div>
+    `,
+  };
+}
+
 function parseBrevoSender(from) {
   const match = from.match(/^\s*(?:"?([^"<]+)"?\s*)?<([^<>@\s]+@[^<>\s]+)>\s*$/);
 
@@ -175,9 +198,8 @@ async function sendWithSmtp(email, content) {
   };
 }
 
-async function sendSignupOtp(email, code) {
+async function sendOtpEmail(email, code, content, logMessage) {
   assertEmailDeliveryConfig();
-  const content = buildOtpEmail(code);
   const provider = getEmailProvider();
 
   if (provider === 'brevo' && hasBrevoConfig()) {
@@ -192,7 +214,7 @@ async function sendSignupOtp(email, code) {
     console.info({
       email,
       code,
-      message: 'Email delivery is not configured; OTP logged for local development only.',
+      message: logMessage,
     });
 
     return { delivered: false };
@@ -201,7 +223,26 @@ async function sendSignupOtp(email, code) {
   return { delivered: false };
 }
 
+async function sendSignupOtp(email, code) {
+  return sendOtpEmail(
+    email,
+    code,
+    buildOtpEmail(code),
+    'Email delivery is not configured; OTP logged for local development only.'
+  );
+}
+
+async function sendPasswordResetOtp(email, code) {
+  return sendOtpEmail(
+    email,
+    code,
+    buildPasswordResetOtpEmail(code),
+    'Email delivery is not configured; password reset OTP logged for local development only.'
+  );
+}
+
 module.exports = {
   assertEmailDeliveryConfig,
   sendSignupOtp,
+  sendPasswordResetOtp,
 };

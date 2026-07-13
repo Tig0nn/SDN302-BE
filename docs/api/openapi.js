@@ -322,6 +322,62 @@ function buildOpenApiSpec(req) {
           },
         },
       },
+      [`${apiPrefix}/auth/email/forgot-password`]: {
+        post: {
+          tags: ['Auth'],
+          summary: 'Request a password reset OTP for an email account',
+          description:
+            'Always returns a generic success payload. An OTP is only created and emailed when the account exists, has a password, and is verified.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ForgotPasswordRequest' },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Password reset challenge response',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/OtpChallenge'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            500: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
+      [`${apiPrefix}/auth/email/reset-password`]: {
+        post: {
+          tags: ['Auth'],
+          summary: 'Reset password with email OTP',
+          description:
+            'Consumes a valid password_reset OTP, updates the password, and revokes all existing sessions.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ResetPasswordRequest' },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Password was reset successfully',
+              content: {
+                'application/json': {
+                  schema: standardSuccess('#/components/schemas/PasswordResetResult'),
+                },
+              },
+            },
+            400: { $ref: '#/components/responses/Error' },
+            429: { $ref: '#/components/responses/Error' },
+          },
+        },
+      },
       [`${apiPrefix}/auth/google`]: {
         post: {
           tags: ['Auth'],
@@ -2280,6 +2336,35 @@ function buildOpenApiSpec(req) {
           required: ['email'],
           properties: {
             email: { type: 'string', format: 'email', example: 'user@gmail.com' },
+          },
+        },
+        ForgotPasswordRequest: {
+          type: 'object',
+          required: ['email'],
+          properties: {
+            email: { type: 'string', format: 'email', example: 'user@gmail.com' },
+          },
+        },
+        ResetPasswordRequest: {
+          type: 'object',
+          required: ['email', 'otpCode', 'newPassword'],
+          properties: {
+            email: { type: 'string', format: 'email', example: 'user@gmail.com' },
+            otpCode: {
+              type: 'string',
+              minLength: env.OTP_LENGTH,
+              maxLength: env.OTP_LENGTH,
+              pattern: '^\\d+$',
+              example: '123456',
+            },
+            newPassword: { type: 'string', minLength: 8, maxLength: 128 },
+          },
+        },
+        PasswordResetResult: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', example: true },
+            email: { type: 'string', format: 'email' },
           },
         },
         OtpChallenge: {

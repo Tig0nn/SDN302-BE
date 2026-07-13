@@ -400,6 +400,8 @@ test('GET /openapi.json exposes documented routes', async function () {
   assert.equal(res.body.openapi, '3.0.3');
   assert.equal(res.body.info.title, 'Ví Vi Vu API');
   assert.ok(res.body.paths['/api/v1/auth/email/register']);
+  assert.ok(res.body.paths['/api/v1/auth/email/forgot-password']);
+  assert.ok(res.body.paths['/api/v1/auth/email/reset-password']);
   assert.ok(res.body.paths['/metrics']);
   assert.ok(res.body.paths['/api/v1/metrics']);
   assert.ok(res.body.paths['/api/v1/auth/email/verify']);

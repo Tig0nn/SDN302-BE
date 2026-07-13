@@ -122,3 +122,49 @@ test('sendSignupOtp delivers through Brevo when configured', async function () {
     restore();
   }
 });
+
+test('sendPasswordResetOtp delivers through Brevo with reset subject', async function () {
+  const previousFetch = globalThis.fetch;
+  const { emailService, restore } = reloadEmailService({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'brevo',
+    BREVO_API_KEY: 'xkeysib_test_key',
+    BREVO_FROM: 'Vi Vi Vu <otp@example.com>',
+    BREVO_API_BASE_URL: 'https://api.brevo.test/v3',
+    BREVO_TIMEOUT_MS: '1000',
+  });
+
+  try {
+    let request;
+
+    globalThis.fetch = async function mockFetch(url, options) {
+      request = {
+        url,
+        body: JSON.parse(options.body),
+      };
+
+      return {
+        ok: true,
+        json: async () => ({ messageId: 'brevo_reset_123' }),
+      };
+    };
+
+    const result = await emailService.sendPasswordResetOtp(
+      'user@example.com',
+      '654321'
+    );
+
+    assert.deepEqual(result, {
+      delivered: true,
+      provider: 'brevo',
+      messageId: 'brevo_reset_123',
+    });
+    assert.equal(request.url, 'https://api.brevo.test/v3/smtp/email');
+    assert.equal(request.body.subject, 'Dat lai mat khau Vi Vi Vu');
+    assert.match(request.body.textContent, /654321/);
+    assert.match(request.body.htmlContent, /654321/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restore();
+  }
+});

@@ -178,6 +178,21 @@ async function updateUserProfile(userId, updates) {
   return result.rows[0] || null;
 }
 
+async function updatePasswordHash(userId, passwordHash) {
+  const result = await db.query(
+    `
+      update users
+      set password_hash = $2,
+          password_updated_at = now()
+      where id = $1
+      returning ${USER_FIELDS}
+    `,
+    [userId, passwordHash]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function ensureUserSettings(client, userId) {
   await client.query(
     `
@@ -458,6 +473,7 @@ module.exports = {
   findUserById,
   findUserByEmailForAuth,
   updateUserProfile,
+  updatePasswordHash,
   ensureDefaultUserData,
   getUserSettings,
   updateUserSettings,

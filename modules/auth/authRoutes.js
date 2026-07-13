@@ -119,6 +119,51 @@ router.post(
 );
 
 router.post(
+  '/email/forgot-password',
+  validate({
+    body: z.object({
+      email: z.string().email(),
+    }),
+  }),
+  async function forgotPassword(req, res, next) {
+    try {
+      const result = await authService.forgotPassword(req.body);
+
+      await auditRepository.recordAuditEvent(req, 'auth.password_reset_requested', {
+        email: maskEmail(result.email),
+        delivered: result.delivered,
+      });
+      sendOk(req, res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/email/reset-password',
+  validate({
+    body: z.object({
+      email: z.string().email(),
+      otpCode: z.string().length(env.OTP_LENGTH).regex(/^\d+$/),
+      newPassword: z.string().min(8).max(128),
+    }),
+  }),
+  async function resetPassword(req, res, next) {
+    try {
+      const result = await authService.resetPassword(req.body);
+
+      await auditRepository.recordAuditEvent(req, 'auth.password_reset_completed', {
+        email: maskEmail(result.email),
+      });
+      sendOk(req, res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
   '/google',
   validate({
     body: z.object({
