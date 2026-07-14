@@ -1,25 +1,30 @@
 # Deploy Vi Vi Vu API
 
-## Railway
+## Render
 
-This repo includes `railway.json` for Railway config-as-code.
+This repo includes `render.yaml` (Render Blueprint) for config-as-code.
 
-Current Railway deployment:
+Current Render deployment:
 
 ```txt
-https://api-production-bbe5.up.railway.app
+https://sdn302-be-47ho.onrender.com
 ```
 
-Railway will:
+Render will:
 
-- Build with the root `Dockerfile`.
-- Run `npm run deploy:prepare` before the app starts, which applies migrations and seeds default data.
+- Build with `npm ci`.
+- Run `npm run deploy:prepare` as the pre-deploy step, which applies migrations and seeds default data.
 - Start the API with `npm start`.
 - Check `/health` before routing traffic to the new deployment.
 
-### Railway Variables
+> Note (Render free tier): the service may spin down when idle, so the first
+> request after inactivity is slow (cold start). Upgrade the plan or ping
+> `/health` periodically to keep it warm. `PORT` is injected by Render and
+> `server.js` already listens on `process.env.PORT`.
 
-Set these variables in Railway service settings:
+### Render Variables
+
+Set these variables in the Render service settings (or via the Blueprint prompts for `sync: false` keys):
 
 ```txt
 NODE_ENV=production
@@ -30,7 +35,7 @@ GOOGLE_CLIENT_IDS=<ios-client-id>,<android-client-id>,<web-client-id>
 CORS_ORIGINS=http://localhost:19006,http://localhost:8081,http://localhost:8082,http://localhost:3000,<frontend-web-origin>
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=300
-PUBLIC_BASE_URL=https://<railway-service-domain>
+PUBLIC_BASE_URL=https://<render-service-domain>
 API_PREFIX=/api/v1
 PASSWORD_HASH_ROUNDS=12
 OTP_LENGTH=6
@@ -42,7 +47,7 @@ BREVO_API_KEY=<brevo-api-key>
 BREVO_FROM=Vi Vi Vu <verified-sender-email>
 BREVO_API_BASE_URL=https://api.brevo.com/v3
 BREVO_TIMEOUT_MS=10000
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_API_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 GEMINI_TIMEOUT_MS=20000
 GEMINI_CHAT_API_KEY=<gemini-key-for-chatbot>
@@ -60,40 +65,30 @@ SMTP_PASS=<gmail-app-password>
 SMTP_FROM=Vi Vi Vu <gmail-address>
 ```
 
-Railway injects `PORT` automatically, and `server.js` already listens on `process.env.PORT`.
+Render injects `PORT` automatically, and `server.js` already listens on `process.env.PORT`.
 
-### Railway Deploy Options
+### Render Deploy Options
 
-Using the Railway dashboard:
+Using the Render dashboard:
 
-1. Create a new Railway project.
+1. Create a new **Web Service** (or a **Blueprint** from `render.yaml`).
 2. Choose **Deploy from GitHub repo** and select this backend repo.
-3. Add the variables above.
-4. Generate a Railway public domain for the service.
+3. Set build command `npm ci`, pre-deploy command `npm run deploy:prepare`, start command `npm start`.
+4. Add the variables above. Render generates the public domain automatically.
 5. Set `PUBLIC_BASE_URL` to that generated domain.
 6. Trigger a deploy.
 
-Using the Railway CLI:
+Using the Render Blueprint (`render.yaml`):
 
-```bash
-npx --yes @railway/cli login --browserless
-npx --yes @railway/cli init
-npx --yes @railway/cli up
-```
-
-For non-interactive deploys, set one Railway token before running CLI commands:
-
-```bash
-export RAILWAY_TOKEN=<project-token>
-# or
-export RAILWAY_API_TOKEN=<account-or-workspace-token>
-```
+1. Push this repo to GitHub.
+2. In Render, choose **New → Blueprint** and point it at the repo.
+3. Render reads `render.yaml`, then prompts for the `sync: false` secrets.
 
 After the first successful deploy, open:
 
 ```txt
-https://<railway-service-domain>/docs
-https://<railway-service-domain>/openapi.json
+https://<render-service-domain>/docs
+https://<render-service-domain>/openapi.json
 ```
 
 ## Required Environment Variables
@@ -137,7 +132,7 @@ Before routing mobile traffic to a new deployment, check:
 
 ## Rollback Plan
 
-If a deployment fails before migrations complete, redeploy the previous successful Railway/Render release and rerun:
+If a deployment fails before migrations complete, redeploy the previous successful Render release and rerun:
 
 ```bash
 npm run db:state
@@ -145,7 +140,7 @@ npm run db:state
 
 If a deployment fails after migrations complete, keep the migrated database in place unless the migration itself is the known cause. The migrations are additive/idempotent for MVP tables, so the preferred rollback is:
 
-1. Redeploy the previous application image/release from Railway or Render.
+1. Redeploy the previous application release from Render.
 2. Confirm `/health` and `/health/db`.
 3. Check `/openapi.json` and a private endpoint with a test token.
 4. Inspect recent logs for `INTERNAL_ERROR` and DB connection errors.

@@ -3,6 +3,8 @@ services:
     name: vi-vi-vu-api
     runtime: node
     buildCommand: npm ci
+    # Chạy migrate + seed trước khi khởi động app (thay preDeployCommand của Railway)
+    preDeployCommand: npm run deploy:prepare
     startCommand: npm start
     healthCheckPath: /health
     envVars:
@@ -44,3 +46,20 @@ services:
         value: https://api.brevo.com/v3
       - key: BREVO_TIMEOUT_MS
         value: 10000
+      # --- AI (Gemini) ---
+      - key: GEMINI_MODEL
+        value: gemini-3.1-flash-lite
+      - key: GEMINI_API_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta
+      - key: GEMINI_TIMEOUT_MS
+        value: 20000
+      - key: GEMINI_CHAT_API_KEY
+        sync: false
+      - key: GEMINI_RECEIPT_API_KEY
+        sync: false
+      - key: AI_RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: AI_RATE_LIMIT_MAX
+        value: 30
+      - key: AI_CHAT_HISTORY_LIMIT
+        value: 12

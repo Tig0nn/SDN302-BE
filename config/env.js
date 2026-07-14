@@ -53,7 +53,7 @@ const env = {
     process.env.SMTP_GREETING_TIMEOUT_MS || 10000
   ),
   SMTP_SOCKET_TIMEOUT_MS: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 20000),
-  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
   GEMINI_API_BASE_URL:
     process.env.GEMINI_API_BASE_URL ||
     'https://generativelanguage.googleapis.com/v1beta',
