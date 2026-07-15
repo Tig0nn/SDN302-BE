@@ -263,6 +263,7 @@ test('POST /api/v1/shopping-plans creates a plan in an owned ledger', async func
     }
 
     if (sql.includes('insert into shopping_plans')) {
+      assert.match(sql, /insert into shopping_plans as sp/);
       assert.equal(params[0], userA);
       assert.equal(params[1], ledgerId);
       assert.equal(params[2], 'Tet groceries');
@@ -330,6 +331,7 @@ test('PATCH /api/v1/shopping-plans/:id updates name and budget', async function 
     }
 
     if (sql.includes('update shopping_plans') && sql.includes('budget_amount_vnd = coalesce')) {
+      assert.match(sql, /update shopping_plans as sp/);
       assert.equal(params[0], userA);
       assert.equal(params[1], planId);
       assert.equal(params[2], null);
@@ -365,6 +367,7 @@ test('DELETE /api/v1/shopping-plans/:id soft deletes a plan and its items', asyn
 
   const clientQueries = installClientHandler(async function handleClientQuery(sql, params) {
     if (sql.includes('update shopping_plans') && sql.includes('set deleted_at = now()')) {
+      assert.match(sql, /update shopping_plans as sp/);
       assert.equal(params[0], userA);
       assert.equal(params[1], planId);
 
@@ -400,6 +403,7 @@ test('POST /api/v1/shopping-plans/:id/items creates an item in an owned plan', a
     }
 
     if (sql.includes('insert into shopping_items')) {
+      assert.match(sql, /insert into shopping_items as si/);
       assert.equal(params[0], userA);
       assert.equal(params[1], planId);
       assert.equal(params[2], 'Milk');
@@ -443,6 +447,7 @@ test('PATCH /api/v1/shopping-items/:id toggles bought state', async function () 
     }
 
     if (sql.includes('update shopping_items') && sql.includes('is_bought = coalesce')) {
+      assert.match(sql, /update shopping_items as si/);
       assert.equal(params[0], userA);
       assert.equal(params[1], itemId);
       assert.equal(params[5], true);
@@ -496,6 +501,7 @@ test('PATCH /api/v1/shopping-items/:id rejects marking linked items unbought', a
 test('DELETE /api/v1/shopping-items/:id soft deletes an item', async function () {
   installQueryHandler(async function handleQuery(sql, params) {
     if (sql.includes('update shopping_items') && sql.includes('set deleted_at = now()')) {
+      assert.match(sql, /update shopping_items as si/);
       assert.equal(params[0], userA);
       assert.equal(params[1], itemId);
 
@@ -577,6 +583,7 @@ test('POST /api/v1/shopping-items/:id/convert-to-transaction creates one shoppin
     }
 
     if (sql.includes('update shopping_items') && sql.includes('linked_transaction_id = $3')) {
+      assert.match(sql, /update shopping_items as si/);
       assert.equal(params[0], userA);
       assert.equal(params[1], itemId);
       assert.equal(params[2], transactionId);

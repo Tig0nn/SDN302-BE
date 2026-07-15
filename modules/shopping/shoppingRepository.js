@@ -210,7 +210,7 @@ async function createShoppingPlan(userId, payload) {
 
   const result = await db.query(
     `
-      insert into shopping_plans (
+      insert into shopping_plans as sp (
         user_id,
         ledger_id,
         name,
@@ -258,7 +258,7 @@ async function updateShoppingPlan(userId, planId, payload) {
 
   const result = await db.query(
     `
-      update shopping_plans
+      update shopping_plans as sp
       set ledger_id = coalesce($3, ledger_id),
           name = coalesce($4, name),
           budget_amount_vnd = coalesce($5, budget_amount_vnd)
@@ -288,7 +288,7 @@ async function deleteShoppingPlan(userId, planId) {
 
     const planResult = await client.query(
       `
-        update shopping_plans
+        update shopping_plans as sp
         set deleted_at = now()
         where user_id = $1
           and id = $2
@@ -355,7 +355,7 @@ async function createShoppingItem(userId, planId, payload) {
 
   const result = await db.query(
     `
-      insert into shopping_items (
+      insert into shopping_items as si (
         user_id,
         shopping_plan_id,
         name,
@@ -415,7 +415,7 @@ async function updateShoppingItem(userId, itemId, payload) {
 
   const result = await db.query(
     `
-      update shopping_items
+      update shopping_items as si
       set name = coalesce($3, name),
           quantity = coalesce($4, quantity),
           estimated_price_vnd = coalesce($5, estimated_price_vnd),
@@ -441,7 +441,7 @@ async function updateShoppingItem(userId, itemId, payload) {
 async function deleteShoppingItem(userId, itemId) {
   const result = await db.query(
     `
-      update shopping_items
+      update shopping_items as si
       set deleted_at = now()
       where user_id = $1
         and id = $2
@@ -534,7 +534,7 @@ async function convertShoppingItemToTransaction(userId, itemId, payload) {
 
     const updatedItem = await client.query(
       `
-        update shopping_items
+        update shopping_items as si
         set is_bought = true,
             linked_transaction_id = $3
         where user_id = $1
